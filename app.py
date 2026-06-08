@@ -54,13 +54,56 @@ else:
             st.subheader("Monitoreo de Unidades")
             st.info("Visualización del estatus actual de los fletes en tránsito.")
             
-        with tab2:
-            st.subheader("Registrar Nuevo Viaje")
-            st.text_input("Origen del flete")
-            st.text_input("Destino del flete")
-            if st.button("Crear Viaje", type="primary", use_container_width=True):
-                st.success("Viaje registrado en el sistema correctamente.")
+       # Buscaremos la sección de las pestañas en tu app.py y nos paramos en Despacho:
+    with tab2: # Asegúrate de que corresponda a tu pestaña de Despacho
+        st.subheader("➕ Registrar Nuevo Viaje")
+        st.write("Ingresa los datos del flete para asignarlo al operador correspondiente.")
+        
+        # Conexión directa a Supabase para guardar los datos
+        from database.conexion import obtener_cliente
+        
+        # Creamos el formulario de captura
+        with st.form("form_nuevo_viaje", clear_on_submit=True):
+            col_flete1, col_flete2 = st.columns(2)
+            
+            with col_flete1:
+                cliente = st.text_input("🏢 Nombre del Cliente")
+                origen = st.text_input("📍 Ciudad de Origen")
+                operador_manual = st.text_input("👤 Nombre del Chofer / Operador")
                 
+            with col_flete2:
+                tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0)
+                destino = st.text_input("🏁 Ciudad de Destino")
+                unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad")
+            
+            # Botón de envío dentro del formulario
+            boton_despachar = st.form_submit_code = st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True)
+            
+            if boton_despachar:
+                # Validamos que los campos obligatorios no estén vacíos
+                if not cliente or not origen or not destino or not operador_manual:
+                    st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
+                else:
+                    try:
+                        supabase = obtener_cliente()
+                        
+                        # Armamos el diccionario con los nombres de tus columnas en Supabase
+                        datos_viaje = {
+                            "cliente": cliente.strip(),
+                            "origen": origen.strip(),
+                            "destino": destino.strip(),
+                            "operador_manual": operador_manual.strip(),
+                            "unidad_manual": unidad_manual.strip(),
+                            "tarifa": tarifa,
+                            "estatus": "En Tránsito" # Se registra activo por defecto
+                        }
+                        
+                        # Insertamos directo en la tabla 'viajes'
+                        supabase.table("viajes").insert(datos_viaje).execute()
+                        st.success(f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**.")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar el viaje en Supabase: {e}")
         with tab3:
             st.subheader("Control de Flota")
             st.write("Catálogo rápido de camiones y operadores.")
