@@ -54,10 +54,46 @@ else:
 
         # PESTAÑA 1: VISUALIZACIÓN DE VIAJES
         with tab1:
-            st.subheader("Monitoreo de Unidades")
-            st.info("Visualización del estatus actual de los fletes en tránsito.")
-            # Aquí implementaremos la tabla interactiva de viajes en la Opción 1
+            # PESTAÑA 1: VISUALIZACIÓN DE VIAJES (OPCIÓN 1 COMPLETADA)
+        with tab1:
+            st.subheader("📊 Monitoreo de Unidades")
+            st.write("Estatus actual de los fletes registrados en el sistema.")
+            
+            from database.conexion import obtener_cliente
+            import pandas as pd
 
+            try:
+                supabase = obtener_cliente()
+                
+                # Consultamos todos los viajes guardados en Supabase, ordenados por el más reciente
+                respuesta = supabase.table("viajes").select("*").order("id", ascending=False).execute()
+                
+                if respuesta.data and len(respuesta.data) > 0:
+                    # Convertimos los datos de Supabase a un formato de tabla (Dataframe)
+                    df_viajes = pd.DataFrame(respuesta.data)
+                    
+                    # Renombramos las columnas para que se vean estéticas en la pantalla
+                    df_viajes = df_viajes.rename(columns={
+                        "cliente": "🏢 Cliente",
+                        "origen": "📍 Origen",
+                        "destino": "🏁 Destino",
+                        "operador_manual": "👤 Chofer",
+                        "unidad_manual": "🚛 Unidad",
+                        "tarifa": "💰 Tarifa ($)",
+                        "estatus": "🟢 Estatus"
+                    })
+                    
+                    # Seleccionamos el orden de las columnas que queremos mostrar (ocultamos IDs internos)
+                    columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
+                    
+                    # Mostramos la tabla interactiva que se adapta al celular o computadora
+                    st.dataframe(df_viajes[columnas_visibles], use_container_width=True, hide_index=True)
+                    
+                else:
+                    st.info("📭 No hay viajes registrados en este momento. Ve a la pestaña 'Despacho' para dar de alta el primero.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
         # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (OPCIÓN 3 COMPLETADA)
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
