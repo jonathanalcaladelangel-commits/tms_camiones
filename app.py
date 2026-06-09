@@ -62,8 +62,8 @@ else:
             try:
                 supabase = obtener_cliente()
                 
-                # Consultamos todos los viajes guardados, ordenados por el ID más reciente
-                respuesta = supabase.table("viajes").select("*").order("id", ascending=False).execute()
+                # CORREGIDO: Usamos desc=True en lugar de ascending=False para la versión de la API
+                respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
                 
                 if respuesta.data and len(respuesta.data) > 0:
                     # Convertimos los datos de Supabase a una tabla de Pandas
