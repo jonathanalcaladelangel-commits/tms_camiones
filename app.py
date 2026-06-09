@@ -1,6 +1,8 @@
 # app.py
 import streamlit as st
+import pandas as pd
 from Dao.usuario_dao import UsuarioDAO
+from database.conexion import obtener_cliente
 
 # Configuración de página limpia y centrada (se adapta a pantallas móviles)
 st.set_page_config(page_title="TMS Camiones", page_icon="🚛", layout="centered")
@@ -52,27 +54,22 @@ else:
         # Creamos las 3 pestañas principales de tu negocio
         tab1, tab2, tab3 = st.tabs(["📊 Viajes", "➕ Despacho", "⚙️ Flota"])
 
-        # PESTAÑA 1: VISUALIZACIÓN DE VIAJES
-        with tab1:
-            # PESTAÑA 1: VISUALIZACIÓN DE VIAJES (OPCIÓN 1 COMPLETADA)
+        # PESTAÑA 1: VISUALIZACIÓN DE VIAJES EN TIEMPO REAL (OPCIÓN 1 COMPLETADA)
         with tab1:
             st.subheader("📊 Monitoreo de Unidades")
             st.write("Estatus actual de los fletes registrados en el sistema.")
             
-            from database.conexion import obtener_cliente
-            import pandas as pd
-
             try:
                 supabase = obtener_cliente()
                 
-                # Consultamos todos los viajes guardados en Supabase, ordenados por el más reciente
+                # Consultamos todos los viajes guardados, ordenados por el ID más reciente
                 respuesta = supabase.table("viajes").select("*").order("id", ascending=False).execute()
                 
                 if respuesta.data and len(respuesta.data) > 0:
-                    # Convertimos los datos de Supabase a un formato de tabla (Dataframe)
+                    # Convertimos los datos de Supabase a una tabla de Pandas
                     df_viajes = pd.DataFrame(respuesta.data)
                     
-                    # Renombramos las columnas para que se vean estéticas en la pantalla
+                    # Renombramos las columnas para la interfaz visual
                     df_viajes = df_viajes.rename(columns={
                         "cliente": "🏢 Cliente",
                         "origen": "📍 Origen",
@@ -83,10 +80,10 @@ else:
                         "estatus": "🟢 Estatus"
                     })
                     
-                    # Seleccionamos el orden de las columnas que queremos mostrar (ocultamos IDs internos)
+                    # Filtramos solo las columnas de interés para el negocio
                     columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
                     
-                    # Mostramos la tabla interactiva que se adapta al celular o computadora
+                    # Desplegamos la tabla interactiva responsiva
                     st.dataframe(df_viajes[columnas_visibles], use_container_width=True, hide_index=True)
                     
                 else:
@@ -94,12 +91,11 @@ else:
                     
             except Exception as e:
                 st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
+
         # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (OPCIÓN 3 COMPLETADA)
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
             st.write("Ingresa los datos del flete para asignarlo al operador correspondiente.")
-            
-            from database.conexion import obtener_cliente
             
             # Formulario de captura limpio
             with st.form("form_nuevo_viaje", clear_on_submit=True):
@@ -115,7 +111,7 @@ else:
                     destino = st.text_input("🏁 Ciudad de Destino")
                     unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad")
                 
-                # Botón corregido y alineado sin errores de sintaxis
+                # Botón de envío alineado
                 boton_despachar = st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True)
                 
                 if boton_despachar:
@@ -135,8 +131,10 @@ else:
                                 "estatus": "En Tránsito"
                             }
                             
-                            supabase.table("viayes" if "viayes" == "viajes" else "viajes").insert(datos_viaje).execute()
+                            # Inserción directa en Supabase
+                            supabase.table("viajes").insert(datos_viaje).execute()
                             st.success(f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**.")
+                            st.balloons() # Animación festiva de éxito
                             
                         except Exception as e:
                             st.error(f"❌ Error al guardar el viaje en Supabase: {e}")
