@@ -85,21 +85,95 @@ else:
             except Exception as e:
                 st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
 
-        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (CORREGIDO SIN DOBLE ENVÍO)
+        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (CORREGIDO Y ESTABLE)
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
             st.write("Ingresa los datos del flete para asignarlo al operador.")
             
-            col_flete1, col_flete2 = st.columns(2)
-            
-            with col_flete1:
-                cliente = st.text_input("🏢 Nombre del Cliente", key="input_cliente")
-                origen = st.text_input("📍 Ciudad de Origen", key="input_origen")
-                operador_manual = st.text_input("👤 Nombre del Chofer / Operador", key="input_operador")
+            # Usamos st.form para agrupar los datos y que no se borren al escribir
+            with st.form("formulario_despacho", clear_on_submit=True):
+                col_flete1, col_flete2 = st.columns(2)
                 
-            with col_flete2:
-                tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0, key="input_tarifa")
-                destino = st.text_input("🏁 Ciudad de Destino", key="input_destino")
-                unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad", key="input_unidad")
+                with col_flete1:
+                    cliente = st.text_input("🏢 Nombre del Cliente")
+                    origen = st.text_input("📍 Ciudad de Origen")
+                    operador_manual = st.text_input("👤 Nombre del Chofer / Operador")
+                    
+                with col_flete2:
+                    tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0)
+                    destino = st.text_input("🏁 Ciudad de Destino")
+                    unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad")
+                
+                # El botón oficial de envío del formulario
+                boton_despachar = st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True)
+                
+                if boton_despachar:
+                    if not cliente or not origen or not destino or not operador_manual:
+                        st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
+                    else:
+                        try:
+                            supabase = obtener_cliente()
+                            
+                            datos_viaje = {
+                                "cliente": cliente.strip(),
+                                "origen": origen.strip(),
+                                "destino": destino.strip(),
+                                "operador_manual": operador_manual.strip(),
+                                "unidad_manual": unidad_manual.strip(),
+                                "tarifa": tarifa,
+                                "estatus": "En Tránsito"
+                            }
+                            
+                            # Insertamos en Supabase
+                            supabase.table("viajes").insert(datos_viaje).execute()
+                            
+                            # Guardamos un mensaje temporal para mostrarlo tras el refresco limpio
+                            st.session_state["mensaje_exito"] = f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**."
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error al guardar el viaje en Supabase: {e}")
             
-            # Botón directo sin st.form para evitar ejec
+            # Si venimos de un registro exitoso, mostramos los globos y el mensaje limpio aquí fuera
+            if "mensaje_exito" in st.session_state:
+                st.success(st.session_state["mensaje_exito"])
+                st.balloons()
+                del st.session_state["mensaje_exito"] # Lo borramos para que no se repita solo
+
+        # PESTAÑA 3: CONFIGURACIÓN DE FLOTA
+        with tab3:
+            st.subheader("⚙️ Control de Flota")
+            st.write("Apartado para gestionar camiones y operadores reales (Próximamente).")
+
+    # =========================================================
+    # VISTA PARA EL CLIENTE (OPCIÓN 4 COMPLETADA)
+    # =========================================================
+    elif st.session_state.rol == "cliente":
+        st.title("Portal de Clientes")
+        st.subheader("📦 Estado de mis Embarques")
+        st.write(f"Bienvenido. Consultando las cargas asignadas a: **{st.session_state.usuario}**")
+        
+        try:
+            supabase = obtener_cliente()
+            
+            # Buscamos en Supabase filtrando para que SOLO vea los viajes donde el cliente coincide con su usuario
+            respuesta = supabase.table("viajes").select("*").eq("cliente", st.session_state.usuario).order("id", desc=True).execute()
+            
+            if respuesta.data and len(respuesta.data) > 0:
+                df_cliente = pd.DataFrame(respuesta.data)
+                
+                df_cliente = df_cliente.rename(columns={
+                    "origen": "📍 Origen",
+                    "destino": "🏁 Destino",
+                    "unidad_manual": "🚛 Unidad asignada",
+                    "estatus": "🟢 Estatus de Entrega"
+                })
+                
+                # Al cliente NO le mostramos la tarifa ni el nombre interno del chofer por privacidad del negocio
+                columnas_cliente = ["📍 Origen", "🏁 Destino", "🚛 Unidad asignada", "🟢 Estatus de Entrega"]
+                st.dataframe(df_cliente[columnas_cliente], use_container_width=True, hide_index=True)
+            else:
+                st.info("📭 Actualmente no tienes ningún embarque en tránsito con nosotros.")
+                
+        except Exception as e:
+            st.error(f"❌ Error al consultar tus datos: {e}")
