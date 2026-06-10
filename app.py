@@ -47,29 +47,27 @@ else:
 
     st.divider()
 
+    # =========================================================
     # VISTA PARA EL DUEÑO / ADMINISTRADOR
+    # =========================================================
     if st.session_state.rol == "admin":
         st.title("Panel de Administración")
         
         # Creamos las 3 pestañas principales de tu negocio
         tab1, tab2, tab3 = st.tabs(["📊 Viajes", "➕ Despacho", "⚙️ Flota"])
 
-        # PESTAÑA 1: VISUALIZACIÓN DE VIAJES EN TIEMPO REAL (OPCIÓN 1 COMPLETADA)
+        # PESTAÑA 1: VISUALIZACIÓN DE VIAJES EN TIEMPO REAL
         with tab1:
             st.subheader("📊 Monitoreo de Unidades")
             st.write("Estatus actual de los fletes registrados en el sistema.")
             
             try:
                 supabase = obtener_cliente()
-                
-                # CORREGIDO: Usamos desc=True en lugar de ascending=False para la versión de la API
                 respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
                 
                 if respuesta.data and len(respuesta.data) > 0:
-                    # Convertimos los datos de Supabase a una tabla de Pandas
                     df_viajes = pd.DataFrame(respuesta.data)
                     
-                    # Renombramos las columnas para la interfaz visual
                     df_viajes = df_viajes.rename(columns={
                         "cliente": "🏢 Cliente",
                         "origen": "📍 Origen",
@@ -80,72 +78,28 @@ else:
                         "estatus": "🟢 Estatus"
                     })
                     
-                    # Filtramos solo las columnas de interés para el negocio
                     columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
-                    
-                    # Desplegamos la tabla interactiva responsiva
                     st.dataframe(df_viajes[columnas_visibles], use_container_width=True, hide_index=True)
-                    
                 else:
-                    st.info("📭 No hay viajes registrados en este momento. Ve a la pestaña 'Despacho' para dar de alta el primero.")
-                    
+                    st.info("📭 No hay viajes registrados en este momento.")
             except Exception as e:
                 st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
 
-        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (OPCIÓN 3 COMPLETADA)
+        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (CORREGIDO SIN DOBLE ENVÍO)
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
-            st.write("Ingresa los datos del flete para asignarlo al operador correspondiente.")
+            st.write("Ingresa los datos del flete para asignarlo al operador.")
             
-            # Formulario de captura limpio
-            with st.form("form_nuevo_viaje", clear_on_submit=True):
-                col_flete1, col_flete2 = st.columns(2)
+            col_flete1, col_flete2 = st.columns(2)
+            
+            with col_flete1:
+                cliente = st.text_input("🏢 Nombre del Cliente", key="input_cliente")
+                origen = st.text_input("📍 Ciudad de Origen", key="input_origen")
+                operador_manual = st.text_input("👤 Nombre del Chofer / Operador", key="input_operador")
                 
-                with col_flete1:
-                    cliente = st.text_input("🏢 Nombre del Cliente")
-                    origen = st.text_input("📍 Ciudad de Origen")
-                    operador_manual = st.text_input("👤 Nombre del Chofer / Operador")
-                    
-                with col_flete2:
-                    tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0)
-                    destino = st.text_input("🏁 Ciudad de Destino")
-                    unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad")
-                
-                # Botón de envío alineado
-                boton_despachar = st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True)
-                
-                if boton_despachar:
-                    if not cliente or not origen or not destino or not operador_manual:
-                        st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
-                    else:
-                        try:
-                            supabase = obtener_cliente()
-                            
-                            datos_viaje = {
-                                "cliente": cliente.strip(),
-                                "origen": origen.strip(),
-                                "destino": destino.strip(),
-                                "operador_manual": operador_manual.strip(),
-                                "unidad_manual": unidad_manual.strip(),
-                                "tarifa": tarifa,
-                                "estatus": "En Tránsito"
-                            }
-                            
-                            # Inserción directa en Supabase
-                            supabase.table("viajes").insert(datos_viaje).execute()
-                            st.success(f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**.")
-                            st.balloons() # Animación festiva de éxito
-                            
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar el viaje en Supabase: {e}")
-
-        # PESTAÑA 3: CONFIGURACIÓN DE FLOTA
-        with tab3:
-            st.subheader("⚙️ Control de Flota")
-            st.write("Apartado para gestionar camiones y operadores reales (Próximamente).")
-
-    # VISTA PARA EL CLIENTE (OPCIÓN 4)
-    elif st.session_state.rol == "cliente":
-        st.title("Portal de Clientes")
-        st.subheader("📦 Estado de mis Embarques")
-        st.write("Bienvenido. Aquí puedes consultar el estatus en tiempo real de tus cargas asignadas.")
+            with col_flete2:
+                tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0, key="input_tarifa")
+                destino = st.text_input("🏁 Ciudad de Destino", key="input_destino")
+                unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad", key="input_unidad")
+            
+            # Botón directo sin st.form para evitar ejec
