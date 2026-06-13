@@ -4,7 +4,7 @@ import pandas as pd
 from Dao.usuario_dao import UsuarioDAO
 from database.conexion import obtener_cliente
 
-# Configuración de página limpia y centrada (se adapta a pantallas móviles)
+# Configuración de página limpia y centrada
 st.set_page_config(page_title="TMS Camiones", page_icon="🚛", layout="centered")
 
 # Inicializar las variables de estado de sesión si no existen
@@ -22,7 +22,6 @@ if not st.session_state.autenticado:
     contrasena_input = st.text_input("Contraseña", type="password")
 
     if st.button("Ingresar", use_container_width=True):
-        # Llamamos al DAO para validar contra Supabase
         rol_detectado = UsuarioDAO.validar_usuario(usuario_input, contrasena_input)
 
         if rol_detectado:
@@ -35,7 +34,6 @@ if not st.session_state.autenticado:
 
 # --- PANEL PRINCIPAL (USUARIO LOGUEADO) ---
 else:
-    # Encabezado móvil con datos del usuario y botón de salida
     col_user, col_logout = st.columns([2, 1])
     col_user.write(f"👤 **{st.session_state.usuario}** ({st.session_state.rol.upper()})")
     
@@ -53,7 +51,6 @@ else:
     if st.session_state.rol == "admin":
         st.title("Panel de Administración")
         
-        # Creamos las 3 pestañas principales de tu negocio
         tab1, tab2, tab3 = st.tabs(["📊 Viajes", "➕ Despacho", "⚙️ Flota"])
 
         # PESTAÑA 1: VISUALIZACIÓN DE VIAJES EN TIEMPO REAL
@@ -63,25 +60,31 @@ else:
             
             try:
                 supabase = obtener_cliente()
-                # CORREGIDO: Ordenamos por 'id_viaje' que es tu columna real
-                respuesta = supabase.table("viajes").select("*").order("id_viaje", desc=True).execute()
+                # CORREGIDO: Tu columna de ordenamiento real es 'id'
+                respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
                 
                 if respuesta.data and len(respuesta.data) > 0:
                     df_viajes = pd.DataFrame(respuesta.data)
                     
-                    # CORREGIDO: Renombramos usando 'id_cliente'
-                    df_viajes = df_viajes.rename(columns={
-                        "id_cliente": "🏢 Cliente",
+                    # Identificamos dinámicamente si la columna es 'id_cliente' o 'cliente'
+                    col_cliente_db = "id_cliente" if "id_cliente" in df_viajes.columns else "cliente"
+                    
+                    columnas_mapeo = {
+                        col_cliente_db: "🏢 Cliente",
                         "origen": "📍 Origen",
                         "destino": "🏁 Destino",
                         "operador_manual": "👤 Chofer",
                         "unidad_manual": "🚛 Unidad",
                         "tarifa": "💰 Tarifa ($)",
                         "estatus": "🟢 Estatus"
-                    })
+                    }
                     
+                    df_viajes = df_viajes.rename(columns=columnas_mapeo)
                     columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
-                    st.dataframe(df_viajes[columnas_visibles], use_container_width=True, hide_index=True)
+                    
+                    # Filtrar solo las que existan para no romper la app
+                    cols_finales = [c for c in columnas_visibles if c in df_viajes.columns]
+                    st.dataframe(df_viajes[cols_finales], use_container_width=True, hide_index=True)
                 else:
                     st.info("📭 No hay viajes registrados en este momento.")
             except Exception as e:
@@ -92,6 +95,15 @@ else:
             st.subheader("➕ Registrar Nuevo Viaje")
             st.write("Ingresa los datos del flete para asignarlo al operador.")
             
+            try:
+                supabase = obtener_cliente()
+                # Traemos las columnas reales de la tabla viajes en caliente para saber cómo se llama la columna de cliente
+                test_cols = supabase.table("viajes").select("*").limit(1).execute()
+                lista_columnas = test_cols.data[0].keys() if test_cols.data else []
+                col_destino_cliente = "id_cliente" if "id_cliente" in lista_columnas else "cliente"
+            except:
+                col_destino_cliente = "id_cliente"
+
             with st.form("formulario_despacho", clear_on_submit=True):
                 col_flete1, col_flete2 = st.columns(2)
                 
@@ -112,11 +124,8 @@ else:
                         st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
                     else:
                         try:
-                            supabase = obtener_cliente()
-                            
-                            # CORREGIDO: La llave del diccionario ahora es 'id_cliente' para que coincida con Supabase
                             datos_viaje = {
-                                "id_cliente": cliente.strip(),
+                                col_destino_cliente: cliente.strip(),
                                 "origen": origen.strip(),
                                 "destino": destino.strip(),
                                 "operador_manual": operador_manual.strip(),
@@ -126,7 +135,6 @@ else:
                             }
                             
                             supabase.table("viajes").insert(datos_viaje).execute()
-                            
                             st.session_state["mensaje_exito"] = f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**."
                             st.rerun()
                             
@@ -153,24 +161,18 @@ else:
         
         try:
             supabase = obtener_cliente()
-            
-            # CORREGIDO: Filtramos usando la columna real 'id_cliente'
-            respuesta = supabase.table("viajes").select("*").eq("id_cliente", st.session_state.usuario).order("id_viaje", desc=True).execute()
+            test_cols = supabase.table("viajes").select("*").limit(1).execute()
+            lista_columnas = test_cols.data[0].keys() if test_cols.data else []
+            col_destino_cliente = "id_cliente" if "id_cliente" in lista_columnas else "cliente"
+
+            respuesta = supabase.table("viajes").select("*").eq(col_destino_cliente, st.session_state.usuario).order("id", desc=True).execute()
             
             if respuesta.data and len(respuesta.data) > 0:
                 df_cliente = pd.DataFrame(respuesta.data)
-                
-                df_cliente = df_cliente.rename(columns={
-                    "origen": "📍 Origen",
-                    "destino": "🏁 Destino",
-                    "unidad_manual": "🚛 Unidad asignada",
-                    "estatus": "🟢 Estatus de Entrega"
-                })
-                
+                df_cliente = df_cliente.rename(columns={"origen": "📍 Origen", "destino": "🏁 Destino", "unidad_manual": "🚛 Unidad asignada", "estatus": "🟢 Estatus de Entrega"})
                 columnas_cliente = ["📍 Origen", "🏁 Destino", "🚛 Unidad asignada", "🟢 Estatus de Entrega"]
                 st.dataframe(df_cliente[columnas_cliente], use_container_width=True, hide_index=True)
             else:
                 st.info("📭 Actualmente no tienes ningún embarque en tránsito con nosotros.")
-                
         except Exception as e:
             st.error(f"❌ Error al consultar tus datos: {e}")
