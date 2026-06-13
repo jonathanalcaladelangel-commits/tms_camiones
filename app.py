@@ -60,31 +60,25 @@ else:
             
             try:
                 supabase = obtener_cliente()
-                # CORREGIDO: Tu columna de ordenamiento real es 'id'
+                # Ordenamos por la columna real 'id'
                 respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
                 
                 if respuesta.data and len(respuesta.data) > 0:
                     df_viajes = pd.DataFrame(respuesta.data)
                     
-                    # Identificamos dinámicamente si la columna es 'id_cliente' o 'cliente'
-                    col_cliente_db = "id_cliente" if "id_cliente" in df_viajes.columns else "cliente"
-                    
-                    columnas_mapeo = {
-                        col_cliente_db: "🏢 Cliente",
+                    # Mapeo estricto con tus columnas reales de Supabase
+                    df_viajes = df_viajes.rename(columns={
+                        "id_cliente": "🏢 Cliente",
                         "origen": "📍 Origen",
                         "destino": "🏁 Destino",
                         "operador_manual": "👤 Chofer",
                         "unidad_manual": "🚛 Unidad",
                         "tarifa": "💰 Tarifa ($)",
                         "estatus": "🟢 Estatus"
-                    }
+                    })
                     
-                    df_viajes = df_viajes.rename(columns=columnas_mapeo)
                     columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
-                    
-                    # Filtrar solo las que existan para no romper la app
-                    cols_finales = [c for c in columnas_visibles if c in df_viajes.columns]
-                    st.dataframe(df_viajes[cols_finales], use_container_width=True, hide_index=True)
+                    st.dataframe(df_viajes[columnas_visibles], use_container_width=True, hide_index=True)
                 else:
                     st.info("📭 No hay viajes registrados en este momento.")
             except Exception as e:
@@ -94,15 +88,6 @@ else:
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
             st.write("Ingresa los datos del flete para asignarlo al operador.")
-            
-            try:
-                supabase = obtener_cliente()
-                # Traemos las columnas reales de la tabla viajes en caliente para saber cómo se llama la columna de cliente
-                test_cols = supabase.table("viajes").select("*").limit(1).execute()
-                lista_columnas = test_cols.data[0].keys() if test_cols.data else []
-                col_destino_cliente = "id_cliente" if "id_cliente" in lista_columnas else "cliente"
-            except:
-                col_destino_cliente = "id_cliente"
 
             with st.form("formulario_despacho", clear_on_submit=True):
                 col_flete1, col_flete2 = st.columns(2)
@@ -124,8 +109,11 @@ else:
                         st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
                     else:
                         try:
+                            supabase = obtener_cliente()
+                            
+                            # 🚀 FIJO: Usamos estrictamente 'id_cliente' que es la columna real de tu Supabase
                             datos_viaje = {
-                                col_destino_cliente: cliente.strip(),
+                                "id_cliente": cliente.strip(),
                                 "origen": origen.strip(),
                                 "destino": destino.strip(),
                                 "operador_manual": operador_manual.strip(),
@@ -161,11 +149,8 @@ else:
         
         try:
             supabase = obtener_cliente()
-            test_cols = supabase.table("viajes").select("*").limit(1).execute()
-            lista_columnas = test_cols.data[0].keys() if test_cols.data else []
-            col_destino_cliente = "id_cliente" if "id_cliente" in lista_columnas else "cliente"
-
-            respuesta = supabase.table("viajes").select("*").eq(col_destino_cliente, st.session_state.usuario).order("id", desc=True).execute()
+            # FIJO: Filtramos usando la columna real 'id_cliente'
+            respuesta = supabase.table("viajes").select("*").eq("id_cliente", st.session_state.usuario).order("id", desc=True).execute()
             
             if respuesta.data and len(respuesta.data) > 0:
                 df_cliente = pd.DataFrame(respuesta.data)
