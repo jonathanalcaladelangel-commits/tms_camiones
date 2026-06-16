@@ -52,7 +52,9 @@ else:
     if st.session_state.rol == "admin":
         st.title("Panel de Administración")
         
-        tab1, tab2, tab3 = st.tabs(["📊 Viajes", "➕ Despacho", "⚙️ Flota"])
+        # Agregamos la pestaña de Gastos al menú principal
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Viajes", "➕ Despacho", "💰 Gastos", "⚙️ Flota"])
+        supabase = obtener_cliente()
 
         # PESTAÑA 1: VISUALIZACIÓN DE VIAJES EN TIEMPO REAL
         with tab1:
@@ -60,7 +62,6 @@ else:
             st.write("Estatus actual de los fletes registrados en el sistema.")
             
             try:
-                supabase = obtener_cliente()
                 respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
                 
                 if respuesta.data and len(respuesta.data) > 0:
@@ -68,6 +69,7 @@ else:
                     col_cliente_db = "id_cliente" if "id_cliente" in df_viajes.columns else "cliente"
                     
                     columnas_mapeo = {
+                        "id": "ID Viaje",
                         col_cliente_db: "🏢 Cliente",
                         "origen": "📍 Origen",
                         "destino": "🏁 Destino",
@@ -92,7 +94,6 @@ else:
             lista_operadores = []
             lista_unidades = []
             try:
-                supabase = obtener_cliente()
                 res_ops = supabase.table("operadores").select("nombre").order("nombre").execute()
                 if res_ops.data:
                     lista_operadores = [row["nombre"] for row in res_ops.data]
@@ -131,7 +132,6 @@ else:
                         st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
                     else:
                         try:
-                            supabase = obtener_cliente()
                             datos_viaje = {
                                 "id_cliente": cliente.strip(),
                                 "origen": origen.strip(),
@@ -153,11 +153,97 @@ else:
                 del st.session_state["mensaje_exito"]
 
         # =========================================================
-        # PESTAÑA 3: CONTROL CENTRAL DE FLOTA (CON EDICIÓN EN VIVO)
+        # PESTAÑA 3: NUEVO MÓDULO DE GASTOS Y LIQUIDACIONES
         # =========================================================
         with tab3:
+            st.header("💰 Liquidación de Gastos y Utilidades")
+            
+            sub_g1, sub_g2 = st.tabs(["💵 Inyectar Gasto", "📈 Reporte de Utilidad Neta"])
+            
+            # Obtener viajes para el selector dinámico
+            opciones_viajes = {}
+            try:
+                res_viajes_gastos = supabase.table("viajes").select("id", "id_cliente", "destino").order("id", desc=True).execute()
+                if res_viajes_gastos.data:
+                    for v in res_viajes_gastos.data:
+                        opciones_viajes[v["id"]] = f"ID: {v['id']} | Cliente: {v['id_cliente']} -> Destino: {v['destino']}"
+            except Exception as e:
+                st.error(f"Error al cargar viajes para gastos: {e}")
+                
+            with sub_g1:
+                st.subheader("Registrar un nuevo costo en ruta")
+                if opciones_viajes:
+                    with st.form("registro_gasto", clear_on_submit=True):
+                        viaje_seleccionado_id = st.selectbox("Selecciona el Viaje Asociado", list(opciones_viajes.keys()), format_func=lambda x: opciones_viajes[x])
+                        
+                        g1, g2 = st.columns(2)
+                        with g1:
+                            tipo_g = st.selectbox("Tipo de Gasto", ['Diésel', 'Casetas', 'Maniobras', 'Sueldo Operador', 'Taller', 'Otros'])
+                            monto_g = st.number_input("Monto del Gasto ($)", min_value=0.0, step=100.0)
+                        with g2:
+                            desc_g = st.text_input("Breve descripción / Nota (ej: Carga de diésel Monterrey)")
+                        
+                        if st.form_submit_button("Guardar Gasto", use_container_width=True):
+                            if monto_g <= 0:
+                                st.error("El monto debe ser mayor a $0.")
+                            else:
+                                try:
+                                    supabase.table("gastos").insert({
+                                        "id_viaje": viaje_seleccionado_id,
+                                        "tipo_gasto": tipo_g,
+                                        "monto": monto_g,
+                                        "descripcion": desc_g.strip()
+                                    }).execute()
+                                    st.success(f"✅ ¡Gasto de {tipo_g} por ${monto_g} registrado exitosamente!")
+                                except Exception as e:
+                                    st.error(f"Error al guardar gasto: {e}")
+                else:
+                    st.info("No hay viajes registrados a los cuales asignarles gastos.")
+                    
+            with sub_g2:
+                st.subheader("Rentabilidad Real por Flete")
+                st.write("Cálculo dinámico basado en las tarifas cobradas menos los gastos inyectados.")
+                
+                try:
+                    res_v = supabase.table("viajes").select("id", "id_cliente", "destino", "tarifa").order("id", desc=True).execute()
+                    res_g = supabase.table("gastos").select("id_viaje", "monto").execute()
+                    
+                    if res_v.data:
+                        df_v = pd.DataFrame(res_v.data)
+                        df_g = pd.DataFrame(res_g.data) if res_g.data else pd.DataFrame(columns=["id_viaje", "monto"])
+                        
+                        # Sumar gastos por viaje usando Pandas
+                        if not df_g.empty:
+                            df_g_sum = df_g.groupby("id_viaje")["monto"].sum().reset_index()
+                            df_g_sum = df_g_sum.rename(columns={"monto": "Gastos Totales"})
+                            # Unir tablas
+                            df_merged = pd.merge(df_v, df_g_sum, left_on="id", right_on="id_viaje", how="left")
+                            df_merged["Gastos Totales"] = df_merged["Gastos Totales"].fillna(0)
+                        else:
+                            df_merged = df_v.copy()
+                            df_merged["Gastos Totales"] = 0
+                            
+                        # Calcular Utilidad Neta
+                        df_merged["Utilidad Neta"] = df_merged["tarifa"] - df_merged["Gastos Totales"]
+                        
+                        # Limpiar visualmente para el usuario
+                        df_merged = df_merged.rename(columns={
+                            "id": "ID Viaje", "id_cliente": "🏢 Cliente", "destino": "🏁 Destino",
+                            "tarifa": "💰 Tarifa ($)", "Gastos Totales": "🛑 Total Gastos ($)", "Utilidad Neta": "💵 Utilidad Neta ($)"
+                        })
+                        
+                        columnas_rentabilidad = ["ID Viaje", "🏢 Cliente", "🏁 Destino", "💰 Tarifa ($)", "🛑 Total Gastos ($)", "💵 Utilidad Neta ($)"]
+                        st.dataframe(df_merged[columnas_rentabilidad], use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No hay datos de fletes suficientes para calcular utilidades.")
+                except Exception as e:
+                    st.error(f"Error al calcular utilidades: {e}")
+
+        # =========================================================
+        # PESTAÑA 4: CONTROL CENTRAL DE FLOTA
+        # =========================================================
+        with tab4:
             st.header("⚙️ Control Central de Flota")
-            supabase = obtener_cliente()
             
             sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🚛 Camiones", "👤 Choferes", "⚠️ Reportar Incidencia", "📋 Reporte Semanal"])
             
@@ -170,7 +256,6 @@ else:
                     if res_unidades_ver.data:
                         df_unis = pd.DataFrame(res_unidades_ver.data)
                         
-                        # Semáforo de contadores rápidos
                         disponibles = len(df_unis[df_unis['estatus'] == 'Disponible'])
                         preventivos = len(df_unis[df_unis['estatus'] == 'Mantenimiento Preventivo'])
                         taller = len(df_unis[df_unis['estatus'] == 'Taller / Reparación'])
@@ -181,7 +266,6 @@ else:
                         m3.metric("🔴 En Taller / Parados", taller)
                         
                         st.write("📝 **Editor de Camiones en Vivo (Haz doble clic en cualquier celda para corregir):**")
-                        # Mapeo limpio para edición tipo Excel
                         df_unis_edit = df_unis[["id", "numero_economico", "placas", "modelo", "anio", "estatus"]]
                         
                         cambios_unis = st.data_editor(
@@ -197,7 +281,6 @@ else:
                         )
                         
                         if st.button("💾 Guardar Cambios en Camiones", use_container_width=True):
-                            # Identificar qué fila cambió y actualizarla en Supabase
                             for i, fila in cambios_unis.iterrows():
                                 original = df_unis_edit.iloc[i]
                                 if not fila.equals(original):
@@ -243,7 +326,7 @@ else:
                     if res_ops_ver.data:
                         df_ops = pd.DataFrame(res_ops_ver.data)
                         
-                        st.write("📝 **Editor de Choferes en Vivo (Corrige nombres, teléfonos o licencias directamente):**")
+                        st.write("📝 **Editor de Choferes en Vivo:**")
                         df_ops_edit = df_ops[["id", "nombre", "licencia", "telefono"]]
                         
                         cambios_ops = st.data_editor(
@@ -311,49 +394,40 @@ else:
                             st.success(f"Reporte aplicado al expediente de {op_seleccionado}.")
                             st.rerun()
 
-            # --- SUB-PESTAÑA 4: MENSAJERÍA Y REPORTE SEMANAL ---
+            # --- SUB-PESTAÑA 4: REPORTE SEMANAL ---
             with sub_tab4:
                 st.subheader("📋 Boletín Semanal de Rendimiento y Desempeño")
-                st.write("Resumen ejecutivo del comportamiento y las sanciones aplicadas en la semana en curso.")
                 
                 try:
-                    # Calculamos el inicio de la semana actual (Lunes)
                     hoy = datetime.now()
                     inicio_semana = hoy - timedelta(days=hoy.weekday())
                     fecha_lunes = inicio_semana.strftime("%Y-%m-%d")
                     
                     st.info(f"📅 **Período Evaluado:** Del lunes {fecha_lunes} al día de hoy.")
                     
-                    # Consultamos todas las incidencias históricas para armar las métricas de récords
                     res_todas = supabase.table("incidencias_operadores").select("*").execute()
                     
                     if res_todas.data:
                         df_todas = pd.DataFrame(res_todas.data)
-                        
-                        # Filtramos las que se aplicaron estrictamente esta semana para el boletín de mensajería
                         df_todas['fecha'] = pd.to_datetime(df_todas['fecha'])
                         df_semana = df_todas[df_todas['fecha'] >= pd.to_datetime(fecha_lunes)]
                         
-                        # Mostrar el resumen tipo Mensajería
                         if not df_semana.empty:
-                            st.warning(f"🚨 **Alertas de la Semana:** Se han levantado {len(df_semana)} reportes por discrepancias.")
+                            st.warning(f"🚨 **Alertas de la Semana:** Se han levantado {len(df_semana)} reportes.")
                             for _, r in df_semana.iterrows():
                                 st.chat_message("assistant", avatar="⚠️").write(
                                     f"**{r['operador_nombre']}** recibió un reporte de tipo *{r['tipo_reporte']}* con un impacto de **{r['puntos_record']} pts**. \n\n*Detalles: {r['descripcion']}*"
                                 )
                         else:
-                            st.success("✨ **Boletín Semanal:** Operación limpia. No se han registrado sanciones ni discrepancias esta semana.")
+                            st.success("✨ **Boletín Semanal:** Operación limpia. No hay sanciones registradas esta semana.")
                         
                         st.divider()
-                        st.write("📊 **Récord Acumulado General de Choferes (Puntuación):**")
-                        st.write("Todos los operadores inician con **0 pts**. Las sanciones restan puntos de su récord histórico.")
-                        
-                        # Agrupamos por chofer para ver quién tiene más sanciones acumuladas
+                        st.write("📊 **Récord Acumulado General de Choferes:**")
                         df_record = df_todas.groupby("operador_nombre")["puntos_record"].sum().reset_index()
                         df_record = df_record.rename(columns={"operador_nombre": "👤 Chofer", "puntos_record": "📉 Puntos Acumulados"})
                         st.dataframe(df_record.sort_values(by="📉 Puntos Acumulados"), use_container_width=True, hide_index=True)
                     else:
-                        st.info("No hay historial de incidencias registrado en el sistema aún.")
+                        st.info("No hay historial de incidencias registrado aún.")
                 except Exception as e:
                     st.error(f"Error al generar reporte semanal: {e}")
 
@@ -366,7 +440,6 @@ else:
         st.write(f"Bienvenido. Consultando las cargas asignadas a: **{st.session_state.usuario}**")
         
         try:
-            supabase = obtener_cliente()
             respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
             
             if respuesta.data and len(respuesta.data) > 0:
