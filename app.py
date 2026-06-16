@@ -64,7 +64,6 @@ else:
                 
                 if respuesta.data and len(respuesta.data) > 0:
                     df_viajes = pd.DataFrame(respuesta.data)
-                    
                     col_cliente_db = "id_cliente" if "id_cliente" in df_viajes.columns else "cliente"
                     
                     columnas_mapeo = {
@@ -79,7 +78,6 @@ else:
                     
                     df_viajes = df_viajes.rename(columns=columnas_mapeo)
                     columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
-                    
                     cols_finales = [c for c in columnas_visibles if c in df_viajes.columns]
                     st.dataframe(df_viajes[cols_finales], use_container_width=True, hide_index=True)
                 else:
@@ -87,22 +85,19 @@ else:
             except Exception as e:
                 st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
 
-        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (OPTIMIZADA)
+        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
             st.write("Ingresa los datos del flete para asignarlo al operador.")
 
-            # --- CARGA DE DATOS PARA SELECTBOXES ---
             lista_operadores = []
             lista_unidades = []
             try:
                 supabase = obtener_cliente()
-                # Traer operadores activos de Supabase
                 res_ops = supabase.table("operadores").select("nombre").order("nombre").execute()
                 if res_ops.data:
                     lista_operadores = [row["nombre"] for row in res_ops.data]
                 
-                # Traer unidades de Supabase
                 res_unis = supabase.table("unidades").select("numero_economico", "modelo").order("numero_economico").execute()
                 if res_unis.data:
                     lista_unidades = [f"{row['numero_economico']} - {row['modelo']}" for row in res_unis.data]
@@ -116,7 +111,6 @@ else:
                     cliente = st.text_input("🏢 Nombre del Cliente")
                     origen = st.text_input("📍 Ciudad de Origen")
                     
-                    # Desplegable inteligente de Operadores
                     if lista_operadores:
                         operador_manual = st.selectbox("👤 Seleccionar Chofer / Operador", lista_operadores)
                     else:
@@ -126,7 +120,6 @@ else:
                     tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0)
                     destino = st.text_input("🏁 Ciudad de Destino")
                     
-                    # Desplegable inteligente de Unidades
                     if lista_unidades:
                         unidad_manual = st.selectbox("🚛 Seleccionar Camión de la Flota", lista_unidades)
                     else:
@@ -140,7 +133,6 @@ else:
                     else:
                         try:
                             supabase = obtener_cliente()
-                            
                             datos_viaje = {
                                 "id_cliente": cliente.strip(),
                                 "origen": origen.strip(),
@@ -150,11 +142,9 @@ else:
                                 "tarifa": tarifa,
                                 "estatus": "En Tránsito"
                             }
-                            
                             supabase.table("viajes").insert(datos_viaje).execute()
                             st.session_state["mensaje_exito"] = f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**."
                             st.rerun()
-                            
                         except Exception as e:
                             st.error(f"❌ Error al guardar el viaje en Supabase: {e}")
             
@@ -163,13 +153,137 @@ else:
                 st.balloons()
                 del st.session_state["mensaje_exito"]
 
-        # PESTAÑA 3: CONFIGURACIÓN DE FLOTA
+        # =========================================================
+        # PESTAÑA 3: OPTIMIZACIÓN DE FLOTA (UNIDADES, CHOFERES E INCIDENCIAS)
+        # =========================================================
         with tab3:
-            st.subheader("⚙️ Control de Flota")
-            st.write("Apartado para gestionar camiones y operadores reales (Próximamente).")
+            st.header("⚙️ Control Central de Flota")
+            
+            sub_tab1, sub_tab2, sub_tab3 = st.tabs(["🚛 Camiones", "👤 Choferes", "⚠️ Récord e Incidencias"])
+            
+            # --- SUB-PESTAÑA 1: CONTROL DE CAMIONES (TERMÓMETRO) ---
+            with sub_tab1:
+                st.subheader("Estatus Mecánico y de Mantenimiento")
+                
+                # Mostrar semáforo visual de unidades existentes
+                try:
+                    supabase = obtener_cliente()
+                    res_unidades_ver = supabase.table("unidades").select("*").order("numero_economico").execute()
+                    if res_unidades_ver.data:
+                        # Generamos métricas en columnas para simular los termómetros de control
+                        cols_mecanicas = st.columns(len(res_unidades_ver.data) if len(res_unidades_ver.data) <= 4 else 4)
+                        for idx, uni in enumerate(res_unidades_ver.data):
+                            col_act = cols_mecanicas[idx % 4]
+                            est_icono = "🟢" if uni["estatus"] == "Disponible" else "🟡" if uni["estatus"] == "Mantenimiento Preventivo" else "🔴"
+                            col_act.metric(label=f"{est_icono} {uni['numero_economico']}", value=uni["modelo"], delta=uni["estatus"])
+                    else:
+                        st.info("No hay camiones dados de alta.")
+                except Exception as e:
+                    st.error(f"Error al leer indicadores: {e}")
+
+                st.divider()
+                st.write("➕ **Registrar Nueva Unidad a la Flota**")
+                with st.form("alta_unidad", clear_on_submit=True):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        num_eco = st.text_input("Número Económico (ej: Eco-05)")
+                        placas_u = st.text_input("Placas de Circulación")
+                    with c2:
+                        modelo_u = st.text_input("Marca / Modelo (ej: Kenworth T680)")
+                        anio_u = st.number_input("Año de la Unidad", min_value=1990, max_value=2027, value=2020, step=1)
+                    with c3:
+                        estatus_u = st.selectbox("Termómetro de Mantenimiento", ["Disponible", "Mantenimiento Preventivo", "Taller / Reparación"])
+                    
+                    if st.form_submit_button("Guardar Camión", use_container_width=True):
+                        if not num_eco or not modelo_u:
+                            st.error("El número económico y modelo son campos obligatorios.")
+                        else:
+                            try:
+                                supabase.table("unidades").insert({
+                                    "numero_economico": num_eco.strip(), "placas": placas_u.strip(),
+                                    "modelo": modelo_u.strip(), "anio": int(anio_u), "estatus": estatus_u
+                                }).execute()
+                                st.success("🚛 Unidad añadida con éxito a la flotilla.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar unidad: {e}")
+
+            # --- SUB-PESTAÑA 2: CONTROL DE OPERADORES ---
+            with sub_tab2:
+                st.subheader("Gestión de Choferes Registrados")
+                
+                with st.form("alta_chofer", clear_on_submit=True):
+                    ch1, ch2, ch3 = st.columns(3)
+                    with ch1:
+                        nom_chofer = st.text_input("Nombre Completo del Operador")
+                    with ch2:
+                        lic_chofer = st.text_input("Número de Licencia Federal")
+                    with ch3:
+                        tel_chofer = st.text_input("Teléfono de Contacto")
+                        
+                    if st.form_submit_button("Dar de Alta Chofer", use_container_width=True):
+                        if not nom_chofer:
+                            st.error("El nombre del operador es obligatorio.")
+                        else:
+                            try:
+                                supabase.table("operadores").insert({
+                                    "nombre": nom_chofer.strip(), "licencia": lic_chofer.strip(), "telefono": tel_chofer.strip()
+                                }).execute()
+                                st.success("👤 Chofer registrado de forma exitosa.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar chofer: {e}")
+
+            # --- SUB-PESTAÑA 3: RÉCORD, DISCREPANCIAS Y SANCIONES ---
+            with sub_tab3:
+                st.subheader("Récord de Desempeño y Sanciones por Chofer")
+                st.write("Registra y audita penalizaciones, daños de carga o incidencias en ruta.")
+                
+                # Jalar operadores dinámicos para el reporte
+                op_opciones = lista_operadores if lista_operadores else ["José Hernández"]
+                
+                with st.form("alta_incidencia", clear_on_submit=True):
+                    col_inc1, col_inc2 = st.columns(2)
+                    with col_inc1:
+                        op_seleccionado = st.selectbox("Seleccionar Chofer a Reportar", op_opciones)
+                        tipo_rep = st.selectbox("Tipo de Incidencia / Reporte", ["Sanción por Retraso", "Discrepancia de Combustible", "Daño a la Unidad / Carga", "Felicitación / Récord Limpio"])
+                    with col_inc2:
+                        puntos_penalizacion = st.slider("Descuento en Récord (Puntos)", min_value=0, max_value=5, value=1)
+                        desc_inc = st.text_area("Detalle de la Discrepancia o Nota descriptiva")
+                        
+                    if st.form_submit_button("Aplicar Reporte al Historial", use_container_width=True):
+                        if not desc_inc:
+                            st.error("Por favor ingresa los detalles explicativos del reporte.")
+                        else:
+                            try:
+                                supabase.table("incidencias_operadores").insert({
+                                    "operador_nombre": op_seleccionado,
+                                    "tipo_reporte": tipo_rep,
+                                    "descripcion": desc_inc.strip(),
+                                    "puntos_record": -int(puntos_penalizacion) if puntos_penalizacion > 0 else 0
+                                }).execute()
+                                st.success(f"⚠️ Reporte aplicado exitosamente al expediente de {op_seleccionado}.")
+                            except Exception as e:
+                                st.error(f"Error al procesar la incidencia: {e}")
+
+                st.divider()
+                st.write("📋 **Consulta de Expedientes en Tiempo Real**")
+                op_consulta = st.selectbox("Filtrar historial del operador:", op_opciones, key="consulta_historial")
+                
+                try:
+                    res_historial = supabase.table("incidencias_operadores").select("*").eq("operador_nombre", op_consulta).order("fecha", desc=True).execute()
+                    if res_historial.data and len(res_historial.data) > 0:
+                        df_hist = pd.DataFrame(res_historial.data)
+                        st.dataframe(df_hist[["fecha", "tipo_reporte", "descripcion", "puntos_record"]].rename(columns={
+                            "fecha": "📅 Fecha", "tipo_reporte": "🚨 Reporte", "descripcion": "🔍 Detalles", "puntos_record": "📉 Impacto Récord"
+                        }), use_container_width=True, hide_index=True)
+                    else:
+                        st.info(f"🟢 El operador {op_consulta} mantiene un récord impecable sin discrepancias registradas.")
+                except Exception as e:
+                    st.error(f"Error al cargar el expediente: {e}")
 
     # =========================================================
-    # VISTA PARA EL CLIENTE 
+    # VISTA PARA EL CLIENTE
     # =========================================================
     elif st.session_state.rol == "cliente":
         st.title("Portal de Clientes")
@@ -188,10 +302,8 @@ else:
                 
                 if not df_cliente.empty:
                     df_cliente = df_cliente.rename(columns={
-                        "origen": "📍 Origen",
-                        "destino": "🏁 Destino",
-                        "unidad_manual": "🚛 Unidad asignada",
-                        "estatus": "🟢 Estatus de Entrega"
+                        "origen": "📍 Origen", "destino": "🏁 Destino",
+                        "unidad_manual": "🚛 Unidad asignada", "estatus": "🟢 Estatus de Entrega"
                     })
                     columnas_cliente = ["📍 Origen", "🏁 Destino", "🚛 Unidad asignada", "🟢 Estatus de Entrega"]
                     cols_finales = [c for c in columnas_cliente if c in df_cliente.columns]
