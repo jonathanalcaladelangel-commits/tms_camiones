@@ -153,12 +153,12 @@ else:
                 del st.session_state["mensaje_exito"]
 
         # =========================================================
-        # PESTAÑA 3: MÓDULO DE GASTOS Y LIQUIDACIÓN MÚLTIPLE
+        # PESTAÑA 3: GASTOS, LIQUIDACIONES Y MODIFICACIONES EN VIVO
         # =========================================================
         with tab3:
             st.header("💰 Liquidación de Gastos y Utilidades")
             
-            sub_g1, sub_g2 = st.tabs(["💵 Liquidación Múltiple", "📈 Reporte de Utilidad Neta"])
+            sub_g1, sub_g2 = st.tabs(["💵 Liquidación Múltiple", "📈 Reporte y Edición de Costos"])
             
             # Obtener viajes para el selector dinámico
             opciones_viajes = {}
@@ -193,16 +193,13 @@ else:
                             monto_otros = st.number_input("📦 Otros Gastos ($)", min_value=0.0, step=100.0, value=0.0)
                         
                         st.divider()
-                        nota_liquidacion = st.text_input("📝 Nota global de la liquidación (ej: Liquidación viaje redondo / Tickets Edwin)")
+                        nota_liquidacion = st.text_input("📝 Nota global de la liquidación (ej: Tickets operador)")
                         
                         if st.form_submit_button("🚀 Guardar Liquidación Completa", use_container_width=True):
                             gastos_a_insertar = [
-                                ("Diésel", monto_diesel),
-                                ("Casetas", monto_casetas),
-                                ("Maniobras", monto_maniobras),
-                                ("Sueldo Operador", monto_sueldo),
-                                ("Taller", monto_taller),
-                                ("Otros", monto_otros)
+                                ("Diésel", monto_diesel), ("Casetas", monto_casetas),
+                                ("Maniobras", monto_maniobras), ("Sueldo Operador", monto_sueldo),
+                                ("Taller", monto_taller), ("Otros", monto_otros)
                             ]
                             
                             contador_inserciones = 0
@@ -212,10 +209,8 @@ else:
                                 if monto_valor > 0:
                                     try:
                                         supabase.table("gastos").insert({
-                                            "id_viaje": viaje_seleccionado_id,
-                                            "tipo_gasto": tipo_concepto,
-                                            "monto": monto_valor,
-                                            "descripcion": nota_liquidacion.strip() if nota_liquidacion else f"Registro de {tipo_concepto}"
+                                            "id_viaje": viaje_seleccionado_id, "tipo_gasto": tipo_concepto,
+                                            "monto": monto_valor, "descripcion": nota_liquidacion.strip() if nota_liquidacion else f"Registro de {tipo_concepto}"
                                         }).execute()
                                         contador_inserciones += 1
                                     except Exception as err:
@@ -224,26 +219,25 @@ else:
                             if errores:
                                 st.error(f"❌ Hubo problemas con algunos conceptos: {errores}")
                             if contador_inserciones > 0:
-                                st.success(f"✅ ¡Liquidación procesada! Se guardaron {contador_inserciones} conceptos en el historial.")
+                                st.success(f"✅ ¡Liquidación procesada! Se guardaron {contador_inserciones} conceptos.")
                                 st.rerun()
-                            elif contador_inserciones == 0 and not errores:
-                                st.warning("⚠️ No ingresaste ningún monto mayor a $0, no se registró nada.")
                 else:
                     st.info("No hay viajes registrados a los cuales asignarles gastos.")
                     
-            # SUB-PESTAÑA 2: REPORTE DE UTILIDADES EN TIEMPO REAL
+            # SUB-PESTAÑA 2: REPORTE Y EDITOR DE COSTOS EN VIVO
             with sub_g2:
                 st.subheader("Rentabilidad Real por Flete")
-                st.write("Cálculo dinámico basado en las tarifas cobradas menos los gastos inyectados.")
+                st.write("Cálculo dinámico de utilidades.")
                 
                 try:
                     res_v = supabase.table("viajes").select("id", "id_cliente", "destino", "tarifa").order("id", desc=True).execute()
-                    res_g = supabase.table("gastos").select("id_viaje", "monto").execute()
+                    res_g = supabase.table("gastos").select("id", "id_viaje", "tipo_gasto", "monto", "descripcion").order("id", desc=True).execute()
                     
                     if res_v.data:
                         df_v = pd.DataFrame(res_v.data)
-                        df_g = pd.DataFrame(res_g.data) if res_g.data else pd.DataFrame(columns=["id_viaje", "monto"])
+                        df_g = pd.DataFrame(res_g.data) if res_g.data else pd.DataFrame(columns=["id", "id_viaje", "tipo_gasto", "monto", "descripcion"])
                         
+                        # Pintar reporte global arriba
                         if not df_g.empty:
                             df_g_sum = df_g.groupby("id_viaje")["monto"].sum().reset_index()
                             df_g_sum = df_g_sum.rename(columns={"monto": "Gastos Totales"})
@@ -255,20 +249,54 @@ else:
                             
                         df_merged["Utilidad Neta"] = df_merged["tarifa"] - df_merged["Gastos Totales"]
                         
-                        df_merged = df_merged.rename(columns={
+                        df_merged_rep = df_merged.rename(columns={
                             "id": "ID Viaje", "id_cliente": "🏢 Cliente", "destino": "🏁 Destino",
                             "tarifa": "💰 Tarifa ($)", "Gastos Totales": "🛑 Total Gastos ($)", "Utilidad Neta": "💵 Utilidad Neta ($)"
                         })
+                        st.dataframe(df_merged_rep[["ID Viaje", "🏢 Cliente", "🏁 Destino", "💰 Tarifa ($)", "🛑 Total Gastos ($)", "💵 Utilidad Neta ($)"]], use_container_width=True, hide_index=True)
                         
-                        columnas_rentabilidad = ["ID Viaje", "🏢 Cliente", "🏁 Destino", "💰 Tarifa ($)", "🛑 Total Gastos ($)", "💵 Utilidad Neta ($)"]
-                        st.dataframe(df_merged[columnas_rentabilidad], use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No hay datos de fletes suficientes para calcular utilidades.")
+                        # --- SECCIÓN EXCLUSIVA DE EDICIÓN Y CORRECCIÓN DE GASTOS ---
+                        st.divider()
+                        st.subheader("📝 Corregir o Modificar Costos Inyectados")
+                        st.write("Haz doble clic sobre cualquier monto o nota para cambiar el dato, luego presiona el botón de guardar.")
+                        
+                        if not df_g.empty:
+                            # Mapeamos para que sea fácil de entender para el usuario qué viaje se está editando
+                            df_g_edit = df_g[["id", "id_viaje", "tipo_gasto", "monto", "descripcion"]]
+                            
+                            cambios_gastos = st.data_editor(
+                                df_g_edit,
+                                key="editor_costos_vivos",
+                                use_container_width=True,
+                                hide_index=True,
+                                disabled=["id", "id_viaje", "tipo_gasto"], # Protegemos para que solo edites el dinero y notas
+                                column_config={
+                                    "id_viaje": "ID Viaje",
+                                    "tipo_gasto": "Concepto",
+                                    "monto": st.column_config.NumberColumn("Monto Corregido ($)", min_value=0.0, step=50.0),
+                                    "descripcion": "Nota / Descripción"
+                                }
+                            )
+                            
+                            if st.button("💾 Guardar Cambios en Gastos", use_container_width=True):
+                                for i, fila in cambios_gastos.iterrows():
+                                    original = df_g_edit.iloc[i]
+                                    # Si el registro cambió, se actualiza en Supabase
+                                    if not fila.equals(original):
+                                        supabase.table("gastos").update({
+                                            "monto": float(fila["monto"]),
+                                            "descripcion": fila["descripcion"].strip()
+                                        }).eq("id", int(fila["id"])).execute()
+                                st.success("🎉 ¡Historial de costos corregido y utilidad actualizada!")
+                                st.rerun()
+                        else:
+                            st.info("No hay gastos registrados individuales todavía para modificar.")
+                            
                 except Exception as e:
-                    st.error(f"Error al calcular utilidades: {e}")
+                    st.error(f"Error al cargar panel de control de utilidades: {e}")
 
         # =========================================================
-        # PESTAÑA 4: CONTROL CENTRAL DE FLOTA (CON EDICIÓN VIVO)
+        # PESTAÑA 4: CONTROL CENTRAL DE FLOTA
         # =========================================================
         with tab4:
             st.header("⚙️ Control Central de Flota")
@@ -293,7 +321,7 @@ else:
                         m2.metric("🟡 En Preventivo", preventivos)
                         m3.metric("🔴 En Taller / Parados", taller)
                         
-                        st.write("📝 **Editor de Camiones en Vivo (Haz doble clic en cualquier celda para corregir):**")
+                        st.write("📝 **Editor de Camiones en Vivo:**")
                         df_unis_edit = df_unis[["id", "numero_economico", "placas", "modelo", "anio", "estatus"]]
                         
                         cambios_unis = st.data_editor(
