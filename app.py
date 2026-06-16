@@ -52,256 +52,188 @@ else:
     if st.session_state.rol == "admin":
         st.title("Panel de Administración")
         
-        # Pestañas principales
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Viajes", "➕ Despacho", "💰 Gastos", "⚙️ Flota"])
+        # Reducción estratégica a solo 3 pestañas principales
+        tab1, tab2, tab3 = st.tabs(["📊 Monitoreo y Utilidades", "📝 Operación de Fletes", "⚙️ Control de Flota"])
         supabase = obtener_cliente()
 
-        # PESTAÑA 1: VISUALIZACIÓN DE VIAJES EN TIEMPO REAL
+        # ---------------------------------------------------------
+        # PESTAÑA 1: MAESTRA DE MONITOREO Y RENTABILIDAD EN VIVO
+        # ---------------------------------------------------------
         with tab1:
-            st.subheader("📊 Monitoreo de Unidades")
-            st.write("Estatus actual de los fletes registrados en el sistema.")
+            st.subheader("📊 Centro de Mando Financiero")
+            st.write("Haz doble clic en cualquier celda para corregir datos del viaje (Tarifa, Cliente, Origen, Destino). Las columnas grises se calculan automáticamente.")
             
             try:
-                respuesta = supabase.table("viajes").select("*").order("id", desc=True).execute()
+                res_v = supabase.table("viajes").select("id", "id_cliente", "origen", "destino", "tarifa", "operador_manual", "unidad_manual", "estatus").order("id", desc=True).execute()
+                res_g = supabase.table("gastos").select("id", "id_viaje", "tipo_gasto", "monto", "descripcion").order("id", desc=True).execute()
                 
-                if respuesta.data and len(respuesta.data) > 0:
-                    df_viajes = pd.DataFrame(respuesta.data)
-                    col_cliente_db = "id_cliente" if "id_cliente" in df_viajes.columns else "cliente"
+                if res_v.data:
+                    df_v = pd.DataFrame(res_v.data)
+                    df_g = pd.DataFrame(res_g.data) if res_g.data else pd.DataFrame(columns=["id", "id_viaje", "tipo_gasto", "monto", "descripcion"])
                     
-                    columnas_mapeo = {
-                        "id": "ID Viaje",
-                        col_cliente_db: "🏢 Cliente",
-                        "origen": "📍 Origen",
-                        "destino": "🏁 Destino",
-                        "operador_manual": "👤 Chofer",
-                        "unidad_manual": "🚛 Unidad",
-                        "tarifa": "💰 Tarifa ($)",
-                        "estatus": "🟢 Estatus"
-                    }
+                    if not df_g.empty:
+                        df_g_sum = df_g.groupby("id_viaje")["monto"].sum().reset_index()
+                        df_g_sum = df_g_sum.rename(columns={"monto": "Gastos Totales"})
+                        df_merged = pd.merge(df_v, df_g_sum, left_on="id", right_on="id_viaje", how="left")
+                        df_merged["Gastos Totales"] = df_merged["Gastos Totales"].fillna(0)
+                    else:
+                        df_merged = df_v.copy()
+                        df_merged["Gastos Totales"] = 0
+                        
+                    df_merged["Utilidad Neta"] = df_merged["tarifa"] - df_merged["Gastos Totales"]
                     
-                    df_mostrar = df_viajes[list(columnas_mapeo.keys())].rename(columns=columnas_mapeo)
-                    st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+                    # Tabla Maestra Interactiva de Viajes
+                    df_viajes_edicion = df_merged[["id", "id_cliente", "origen", "destino", "tarifa", "Gastos Totales", "Utilidad Neta"]]
+                    cambios_viajes = st.data_editor(
+                        df_viajes_edicion,
+                        key="editor_viajes_maestro",
+                        use_container_width=True,
+                        hide_index=True,
+                        disabled=["id", "Gastos Totales", "Utilidad Neta"],
+                        column_config={
+                            "id": "ID Viaje", "id_cliente": "🏢 Cliente", "origen": "📍 Origen", "destino": "🏁 Destino",
+                            "tarifa": st.column_config.NumberColumn("💰 Tarifa ($)", min_value=0.0, step=500.0),
+                            "Gastos Totales": "🛑 Total Gastos ($)", "Utilidad Neta": "💵 Utilidad Neta ($)"
+                        }
+                    )
+                    
+                    if st.button("💾 Guardar Correcciones de Viajes", use_container_width=True):
+                        for i, fila in cambios_viajes.iterrows():
+                            original = df_viajes_edicion.iloc[i]
+                            if not fila.equals(original):
+                                supabase.table("viajes").update({
+                                    "id_cliente": fila["id_cliente"], "origen": fila["origen"],
+                                    "destino": fila["destino"], "tarifa": float(fila["tarifa"])
+                                }).eq("id", int(fila["id"])).execute()
+                        st.success("🎉 ¡Cambios guardados con éxito!")
+                        st.rerun()
+                        
+                    # Tabla Secundaria de Desglose de Gastos
+                    st.divider()
+                    st.subheader("🔍 Desglose Individual de Tickets de Gasto")
+                    if not df_g.empty:
+                        df_g_edit = df_g[["id", "id_viaje", "tipo_gasto", "monto", "descripcion"]]
+                        cambios_gastos = st.data_editor(
+                            df_g_edit,
+                            key="editor_costos_maestro",
+                            use_container_width=True,
+                            hide_index=True,
+                            disabled=["id", "id_viaje", "tipo_gasto"],
+                            column_config={
+                                "id_viaje": "ID Viaje", "tipo_gasto": "Concepto",
+                                "monto": st.column_config.NumberColumn("Monto ($)", min_value=0.0, step=50.0), "descripcion": "Nota / Detalle"
+                            }
+                        )
+                        if st.button("💾 Guardar Correcciones de Tickets", use_container_width=True):
+                            for i, fila in cambios_gastos.iterrows():
+                                original = df_g_edit.iloc[i]
+                                if not fila.equals(original):
+                                    supabase.table("gastos").update({
+                                        "monto": float(fila["monto"]), "descripcion": fila["descripcion"].strip()
+                                    }).eq("id", int(fila["id"])).execute()
+                            st.success("🎉 ¡Tickets actualizados!")
+                            st.rerun()
+                    else:
+                        st.info("No hay tickets de gastos registrados en el sistema.")
                 else:
-                    st.info("📭 No hay viajes registrados en este momento.")
+                    st.info("📭 No hay fletes registrados aún.")
             except Exception as e:
-                st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
+                st.error(f"Error en panel de control: {e}")
 
-        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES
+        # ---------------------------------------------------------
+        # PESTAÑA 2: OPERACIÓN DE FLETES (DESPACHO + LIQUIDACIÓN UNIFICADOS)
+        # ---------------------------------------------------------
         with tab2:
-            st.subheader("➕ Registrar Nuevo Viaje")
-            st.write("Ingresa los datos del flete para asignarlo al operador.")
-
+            st.header("📝 Gestión de Operación Diaria")
+            
+            # Sub-sección A: Crear Viajes
+            st.subheader("➕ Despachar Nuevo Viaje")
             lista_operadores = []
             lista_unidades = []
             try:
                 res_ops = supabase.table("operadores").select("nombre").order("nombre").execute()
                 if res_ops.data:
                     lista_operadores = [row["nombre"] for row in res_ops.data]
-                
                 res_unis = supabase.table("unidades").select("numero_economico", "modelo").order("numero_economico").execute()
                 if res_unis.data:
                     lista_unidades = [f"{row['numero_economico']} - {row['modelo']}" for row in res_unis.data]
             except Exception as e:
-                st.warning(f"⚠️ Nota: No se pudieron precargar choferes/unidades automáticamente.")
+                st.warning(f"⚠️ Nota: Error al precargar listas dinámicas.")
 
-            with st.form("formulario_despacho", clear_on_submit=True):
+            with st.form("formulario_despacho_maestro", clear_on_submit=True):
                 col_flete1, col_flete2 = st.columns(2)
-                
                 with col_flete1:
                     cliente = st.text_input("🏢 Nombre del Cliente")
                     origen = st.text_input("📍 Ciudad de Origen")
-                    
-                    if lista_operadores:
-                        operador_manual = st.selectbox("👤 Seleccionar Chofer / Operador", lista_operadores)
-                    else:
-                        operador_manual = st.text_input("👤 Nombre del Chofer / Operador (Manual)")
-                    
+                    operador_manual = st.selectbox("👤 Seleccionar Chofer", lista_operadores) if lista_operadores else st.text_input("👤 Chofer (Manual)")
                 with col_flete2:
                     tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0)
                     destino = st.text_input("🏁 Ciudad de Destino")
-                    
-                    if lista_unidades:
-                        unidad_manual = st.selectbox("🚛 Seleccionar Camión de la Flota", lista_unidades)
-                    else:
-                        unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad (Manual)")
+                    unidad_manual = st.selectbox("Compañía / Camión", lista_unidades) if lista_unidades else st.text_input("🚛 Camión (Manual)")
                 
-                boton_despachar = st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True)
-                
-                if boton_despachar:
-                    if not cliente or not origen or not destino or not operador_manual:
-                        st.error("⚠️ Por favor, llena los campos esenciales (Cliente, Origen, Destino y Chofer).")
+                if st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True):
+                    if cliente and origen and destino:
+                        supabase.table("viajes").insert({
+                            "id_cliente": cliente.strip(), "origen": origen.strip(), "destino": destino.strip(),
+                            "operador_manual": operador_manual.strip(), "unidad_manual": unidad_manual.strip(), "tarifa": tarifa, "estatus": "En Tránsito"
+                        }).execute()
+                        st.success("✅ ¡Viaje lanzado con éxito hacia la ruta!")
+                        st.rerun()
                     else:
-                        try:
-                            datos_viaje = {
-                                "id_cliente": cliente.strip(),
-                                "origen": origen.strip(),
-                                "destino": destino.strip(),
-                                "operador_manual": operador_manual.strip(),
-                                "unidad_manual": unidad_manual.strip(),
-                                "tarifa": tarifa,
-                                "estatus": "En Tránsito"
-                            }
-                            supabase.table("viajes").insert(datos_viaje).execute()
-                            st.session_state["mensaje_exito"] = f"✅ ¡Viaje registrado con éxito! Operador **{operador_manual}** va en tránsito hacia **{destino}**."
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error al guardar el viaje en Supabase: {e}")
-            
-            if "mensaje_exito" in st.session_state:
-                st.success(st.session_state["mensaje_exito"])
-                st.balloons()
-                del st.session_state["mensaje_exito"]
+                        st.error("Por favor completa los campos obligatorios.")
 
-        # =========================================================
-        # PESTAÑA 3: GASTOS Y LIQUIDACIONES (INTERFAZ UNIFICADA)
-        # =========================================================
-        with tab3:
-            st.header("💰 Liquidación de Gastos y Utilidades")
-            
-            sub_g1, sub_g2 = st.tabs(["💵 Liquidación Múltiple", "📈 Control de Viajes y Utilidades"])
+            # Sub-sección B: Liquidación Inmediata de Gastos (Unificado abajo)
+            st.divider()
+            st.subheader("💵 Liquidación de Gastos en Ruta")
+            st.write("Registra los comprobantes y viáticos de combustible o casetas acumulados por el chofer.")
             
             opciones_viajes = {}
             try:
                 res_viajes_gastos = supabase.table("viajes").select("id", "id_cliente", "destino").order("id", desc=True).execute()
                 if res_viajes_gastos.data:
                     for v in res_viajes_gastos.data:
-                        opciones_viajes[v["id"]] = f"ID: {v['id']} | Cliente: {v['id_cliente']} -> Destino: {v['destino']}"
-            except Exception as e:
-                st.error(f"Error al cargar fletes para gastos: {e}")
+                        opciones_viajes[v["id"]] = f"ID: {v['id']} | {v['id_cliente']} -> {v['destino']}"
+            except:
+                pass
                 
-            # SUB-PESTAÑA 1: FORMULARIO DINÁMICO DE LIQUIDACIÓN
-            with sub_g1:
-                st.subheader("Registrar Liquidación Completa")
-                st.write("Introduce los montos de los conceptos que apliquen para este flete. Puedes llenar varios a la vez.")
-                
-                if opciones_viajes:
-                    with st.form("registro_gasto_multiple", clear_on_submit=True):
-                        viaje_seleccionado_id = st.selectbox("Selecciona el Viaje Asociado", list(opciones_viajes.keys()), format_func=lambda x: opciones_viajes[x])
-                        st.divider()
-                        
-                        col_g1, col_g2 = st.columns(2)
-                        with col_g1:
-                            monto_diesel = st.number_input("⛽ Diésel ($)", min_value=0.0, step=500.0, value=0.0)
-                            monto_casetas = st.number_input("🛣️ Casetas ($)", min_value=0.0, step=100.0, value=0.0)
-                            monto_maniobras = st.number_input("🏗️ Maniobras / Descargas ($)", min_value=0.0, step=100.0, value=0.0)
-                        with col_g2:
-                            monto_sueldo = st.number_input("👤 Sueldo / Comisión Operador ($)", min_value=0.0, step=500.0, value=0.0)
-                            monto_taller = st.number_input("🔧 Taller / Reparación en Ruta ($)", min_value=0.0, step=200.0, value=0.0)
-                            monto_otros = st.number_input("📦 Otros Gastos ($)", min_value=0.0, step=100.0, value=0.0)
-                        
-                        st.divider()
-                        nota_liquidacion = st.text_input("📝 Nota global de la liquidación")
-                        
-                        if st.form_submit_button("🚀 Guardar Liquidación Completa", use_container_width=True):
-                            gastos_a_insertar = [
-                                ("Diésel", monto_diesel), ("Casetas", monto_casetas),
-                                ("Maniobras", monto_maniobras), ("Sueldo Operador", monto_sueldo),
-                                ("Taller", monto_taller), ("Otros", monto_otros)
-                            ]
-                            contador_inserciones = 0
-                            for tipo_concepto, monto_valor in gastos_a_insertar:
-                                if monto_valor > 0:
-                                    supabase.table("gastos").insert({
-                                        "id_viaje": viaje_seleccionado_id, "tipo_gasto": tipo_concepto,
-                                        "monto": monto_valor, "descripcion": nota_liquidacion.strip() if nota_liquidacion else f"Registro de {tipo_concepto}"
-                                    }).execute()
-                                    contador_inserciones += 1
-                            if contador_inserciones > 0:
-                                st.success(f"✅ ¡Liquidación procesada con éxito!")
-                                st.rerun()
-                else:
-                    st.info("No hay viajes registrados.")
+            if opciones_viajes:
+                with st.form("registro_gasto_unificado_form", clear_on_submit=True):
+                    viaje_seleccionado_id = st.selectbox("Asociar Liquidación al Viaje ID:", list(opciones_viajes.keys()), format_func=lambda x: opciones_viajes[x])
+                    st.write("Introduce los montos correspondientes:")
                     
-            # SUB-PESTAÑA 2: CONTROL CENTRALIZADO (EDICIÓN INTEGRADA DE VIAJE Y COSTO)
-            with sub_g2:
-                st.subheader("📝 Panel de Control Operativo y Financiero")
-                st.write("Haz doble clic en cualquier celda habilitada para corregir datos del viaje (Tarifa, Cliente, Destino, etc.). Las columnas de color gris se calculan solas.")
-                
-                try:
-                    res_v = supabase.table("viajes").select("id", "id_cliente", "origen", "destino", "tarifa", "operador_manual", "unidad_manual", "estatus").order("id", desc=True).execute()
-                    res_g = supabase.table("gastos").select("id", "id_viaje", "tipo_gasto", "monto", "descripcion").order("id", desc=True).execute()
+                    col_g1, col_g2 = st.columns(2)
+                    with col_g1:
+                        monto_diesel = st.number_input("⛽ Diésel ($)", min_value=0.0, step=500.0, value=0.0)
+                        monto_casetas = st.number_input("🛣️ Casetas ($)", min_value=0.0, step=100.0, value=0.0)
+                        monto_maniobras = st.number_input("🏗️ Maniobras / Descargas ($)", min_value=0.0, step=100.0, value=0.0)
+                    with col_g2:
+                        monto_sueldo = st.number_input("👤 Sueldo Operador ($)", min_value=0.0, step=500.0, value=0.0)
+                        monto_taller = st.number_input("🔧 Reparación en Ruta ($)", min_value=0.0, step=200.0, value=0.0)
+                        monto_otros = st.number_input("📦 Otros Gastos ($)", min_value=0.0, step=100.0, value=0.0)
                     
-                    if res_v.data:
-                        df_v = pd.DataFrame(res_v.data)
-                        df_g = pd.DataFrame(res_g.data) if res_g.data else pd.DataFrame(columns=["id", "id_viaje", "tipo_gasto", "monto", "descripcion"])
-                        
-                        # Agrupar e integrar gastos en la tabla principal de viajes
-                        if not df_g.empty:
-                            df_g_sum = df_g.groupby("id_viaje")["monto"].sum().reset_index()
-                            df_g_sum = df_g_sum.rename(columns={"monto": "Gastos Totales"})
-                            df_merged = pd.merge(df_v, df_g_sum, left_on="id", right_on="id_viaje", how="left")
-                            df_merged["Gastos Totales"] = df_merged["Gastos Totales"].fillna(0)
-                        else:
-                            df_merged = df_v.copy()
-                            df_merged["Gastos Totales"] = 0
-                            
-                        df_merged["Utilidad Neta"] = df_merged["tarifa"] - df_merged["Gastos Totales"]
-                        
-                        # --- TABLA INTERACTIVA 1: EDITAR LOS DATOS DEL VIAJE DIRECTAMENTE ---
-                        df_viajes_edicion = df_merged[["id", "id_cliente", "origen", "destino", "tarifa", "Gastos Totales", "Utilidad Neta"]]
-                        
-                        cambios_viajes = st.data_editor(
-                            df_viajes_edicion,
-                            key="editor_viajes_financiero",
-                            use_container_width=True,
-                            hide_index=True,
-                            disabled=["id", "Gastos Totales", "Utilidad Neta"], # Protegemos lo calculado matemáticamente
-                            column_config={
-                                "id": "ID Viaje", "id_cliente": "🏢 Cliente", "origen": "📍 Origen", "destino": "🏁 Destino",
-                                "tarifa": st.column_config.NumberColumn("💰 Tarifa ($)", min_value=0.0, step=500.0),
-                                "Gastos Totales": "🛑 Total Gastos ($)", "Utilidad Neta": "💵 Utilidad Neta ($)"
-                            }
-                        )
-                        
-                        if st.button("💾 Guardar Correcciones de Viajes", use_container_width=True):
-                            for i, fila in cambios_viajes.iterrows():
-                                original = df_viajes_edicion.iloc[i]
-                                if not fila.equals(original):
-                                    supabase.table("viajes").update({
-                                        "id_cliente": fila["id_cliente"], "origen": fila["origen"],
-                                        "destino": fila["destino"], "tarifa": float(fila["tarifa"])
-                                    }).eq("id", int(fila["id"])).execute()
-                            st.success("🎉 ¡Datos de los viajes actualizados de forma exitosa!")
-                            st.rerun()
-                            
-                        # --- TABLA INTERACTIVA 2: EDITAR EL DESGLOSE DE TICKETS ---
-                        st.divider()
-                        st.subheader("🔍 Desglose Individual de Tickets de Gasto")
-                        st.write("Si capturaste mal un ticket de diésel o caseta, edítalo aquí abajo:")
-                        
-                        if not df_g.empty:
-                            df_g_edit = df_g[["id", "id_viaje", "tipo_gasto", "monto", "descripcion"]]
-                            cambios_gastos = st.data_editor(
-                                df_g_edit,
-                                key="editor_costos_unificados",
-                                use_container_width=True,
-                                hide_index=True,
-                                disabled=["id", "id_viaje", "tipo_gasto"],
-                                column_config={
-                                    "id_viaje": "ID Viaje Relacionado", "tipo_gasto": "Concepto",
-                                    "monto": st.column_config.NumberColumn("Monto ($)", min_value=0.0, step=50.0), "descripcion": "Nota / Detalle"
-                                }
-                            )
-                            
-                            if st.button("💾 Guardar Correcciones de Tickets", use_container_width=True):
-                                for i, fila in cambios_gastos.iterrows():
-                                    original = df_g_edit.iloc[i]
-                                    if not fila.equals(original):
-                                        supabase.table("gastos").update({
-                                            "monto": float(fila["monto"]), "descripcion": fila["descripcion"].strip()
-                                        }).eq("id", int(fila["id"])).execute()
-                                st.success("🎉 ¡Tickets actualizados correctamente!")
-                                st.rerun()
-                        else:
-                            st.info("No hay tickets de gastos registrados todavía.")
-                            
-                except Exception as e:
-                    st.error(f"Error al cargar panel unificado: {e}")
+                    nota_liquidacion = st.text_input("📝 Nota descriptiva de la liquidación")
+                    
+                    if st.form_submit_button("💾 Guardar Gastos de Liquidación", use_container_width=True):
+                        gastos_a_insertar = [
+                            ("Diésel", monto_diesel), ("Casetas", monto_casetas),
+                            ("Maniobras", monto_maniobras), ("Sueldo Operador", monto_sueldo),
+                            ("Taller", monto_taller), ("Otros", monto_otros)
+                        ]
+                        for tipo_concepto, monto_valor in gastos_a_insertar:
+                            if monto_valor > 0:
+                                supabase.table("gastos").insert({
+                                    "id_viaje": viaje_seleccionado_id, "tipo_gasto": tipo_concepto,
+                                    "monto": monto_valor, "descripcion": nota_liquidacion.strip() if nota_liquidacion else f"Registro de {tipo_concepto}"
+                                }).execute()
+                        st.success("✅ ¡Liquidación guardada exitosamente!")
+                        st.rerun()
+            else:
+                st.info("No hay viajes disponibles para liquidar costos.")
 
-        # =========================================================
-        # PESTAÑA 4: CONTROL CENTRAL DE FLOTA
-        # =========================================================
-        with tab4:
+        # ---------------------------------------------------------
+        # PESTAÑA 3: CONTROL CENTRAL DE FLOTA
+        # ---------------------------------------------------------
+        with tab3:
             st.header("⚙️ Control Central de Flota")
             sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🚛 Camiones", "👤 Choferes", "⚠️ Reportar Incidencia", "📋 Reporte Semanal"])
             
@@ -311,14 +243,10 @@ else:
                     res_unidades_ver = supabase.table("unidades").select("*").order("numero_economico").execute()
                     if res_unidades_ver.data:
                         df_unis = pd.DataFrame(res_unidades_ver.data)
-                        disponibles = len(df_unis[df_unis['estatus'] == 'Disponible'])
-                        preventivos = len(df_unis[df_unis['estatus'] == 'Mantenimiento Preventivo'])
-                        taller = len(df_unis[df_unis['estatus'] == 'Taller / Reparación'])
-                        
                         m1, m2, m3 = st.columns(3)
-                        m1.metric("🟢 Unidades Disponibles", disponibles)
-                        m2.metric("🟡 En Preventivo", preventivos)
-                        m3.metric("🔴 En Taller / Parados", taller)
+                        m1.metric("🟢 Disponibles", len(df_unis[df_unis['estatus'] == 'Disponible']))
+                        m2.metric("🟡 En Preventivo", len(df_unis[df_unis['estatus'] == 'Mantenimiento Preventivo']))
+                        m3.metric("🔴 En Taller", len(df_unis[df_unis['estatus'] == 'Taller / Reparación']))
                         
                         df_unis_edit = df_unis[["id", "numero_economico", "placas", "modelo", "anio", "estatus"]]
                         cambios_unis = st.data_editor(
@@ -338,8 +266,6 @@ else:
                                     }).eq("id", int(fila["id"])).execute()
                             st.success("¡Flotilla actualizada!")
                             st.rerun()
-                    else:
-                        st.info("No hay camiones.")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -384,8 +310,6 @@ else:
                                     }).eq("id", int(fila["id"])).execute()
                             st.success("¡Padrón actualizado!")
                             st.rerun()
-                    else:
-                        st.info("No hay operadores.")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
