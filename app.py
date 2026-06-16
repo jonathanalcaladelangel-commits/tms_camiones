@@ -178,7 +178,7 @@ else:
                         m1, m2, m3 = st.columns(3)
                         m1.metric("🟢 Unidades Disponibles", disponibles)
                         m2.metric("🟡 En Preventivo", preventivos)
-                        m3.metric("🔴 En Taller / Parados", talle)
+                        m3.metric("🔴 En Taller / Parados", taller)
                         
                         st.write("📝 **Editor de Camiones en Vivo (Haz doble clic en cualquier celda para corregir):**")
                         # Mapeo limpio para edición tipo Excel
