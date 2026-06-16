@@ -1,6 +1,7 @@
 # app.py
 import streamlit as st
 import pandas as pd
+from datetime import datetime, timedelta
 from Dao.usuario_dao import UsuarioDAO
 from database.conexion import obtener_cliente
 
@@ -76,10 +77,8 @@ else:
                         "estatus": "🟢 Estatus"
                     }
                     
-                    df_viajes = df_viajes.rename(columns=columnas_mapeo)
-                    columnas_visibles = ["🏢 Cliente", "📍 Origen", "🏁 Destino", "👤 Chofer", "🚛 Unidad", "💰 Tarifa ($)", "🟢 Estatus"]
-                    cols_finales = [c for c in columnas_visibles if c in df_viajes.columns]
-                    st.dataframe(df_viajes[cols_finales], use_container_width=True, hide_index=True)
+                    df_mostrar = df_viajes[list(columnas_mapeo.keys())].rename(columns=columnas_mapeo)
+                    st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
                 else:
                     st.info("📭 No hay viajes registrados en este momento.")
             except Exception as e:
@@ -154,133 +153,209 @@ else:
                 del st.session_state["mensaje_exito"]
 
         # =========================================================
-        # PESTAÑA 3: OPTIMIZACIÓN DE FLOTA (UNIDADES, CHOFERES E INCIDENCIAS)
+        # PESTAÑA 3: CONTROL CENTRAL DE FLOTA (CON EDICIÓN EN VIVO)
         # =========================================================
         with tab3:
             st.header("⚙️ Control Central de Flota")
+            supabase = obtener_cliente()
             
-            sub_tab1, sub_tab2, sub_tab3 = st.tabs(["🚛 Camiones", "👤 Choferes", "⚠️ Récord e Incidencias"])
+            sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🚛 Camiones", "👤 Choferes", "⚠️ Reportar Incidencia", "📋 Reporte Semanal"])
             
-            # --- SUB-PESTAÑA 1: CONTROL DE CAMIONES (TERMÓMETRO) ---
+            # --- SUB-PESTAÑA 1: CONTROL Y EDICIÓN DE CAMIONES ---
             with sub_tab1:
-                st.subheader("Estatus Mecánico y de Mantenimiento")
+                st.subheader("Estatus Mecánico y Modificaciones")
                 
-                # Mostrar semáforo visual de unidades existentes
                 try:
-                    supabase = obtener_cliente()
                     res_unidades_ver = supabase.table("unidades").select("*").order("numero_economico").execute()
                     if res_unidades_ver.data:
-                        # Generamos métricas en columnas para simular los termómetros de control
-                        cols_mecanicas = st.columns(len(res_unidades_ver.data) if len(res_unidades_ver.data) <= 4 else 4)
-                        for idx, uni in enumerate(res_unidades_ver.data):
-                            col_act = cols_mecanicas[idx % 4]
-                            est_icono = "🟢" if uni["estatus"] == "Disponible" else "🟡" if uni["estatus"] == "Mantenimiento Preventivo" else "🔴"
-                            col_act.metric(label=f"{est_icono} {uni['numero_economico']}", value=uni["modelo"], delta=uni["estatus"])
+                        df_unis = pd.DataFrame(res_unidades_ver.data)
+                        
+                        # Semáforo de contadores rápidos
+                        disponibles = len(df_unis[df_unis['estatus'] == 'Disponible'])
+                        preventivos = len(df_unis[df_unis['estatus'] == 'Mantenimiento Preventivo'])
+                        taller = len(df_unis[df_unis['estatus'] == 'Taller / Reparación'])
+                        
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("🟢 Unidades Disponibles", disponibles)
+                        m2.metric("🟡 En Preventivo", preventivos)
+                        m3.metric("🔴 En Taller / Parados", talle)
+                        
+                        st.write("📝 **Editor de Camiones en Vivo (Haz doble clic en cualquier celda para corregir):**")
+                        # Mapeo limpio para edición tipo Excel
+                        df_unis_edit = df_unis[["id", "numero_economico", "placas", "modelo", "anio", "estatus"]]
+                        
+                        cambios_unis = st.data_editor(
+                            df_unis_edit, 
+                            key="editor_unidades", 
+                            use_container_width=True, 
+                            hide_index=True,
+                            disabled=["id"],
+                            column_config={
+                                "numero_economico": "Económico", "placas": "Placas", "modelo": "Marca/Modelo", "anio": "Año",
+                                "estatus": st.column_config.SelectboxColumn("Termómetro", options=["Disponible", "Mantenimiento Preventivo", "Taller / Reparación"], required=True)
+                            }
+                        )
+                        
+                        if st.button("💾 Guardar Cambios en Camiones", use_container_width=True):
+                            # Identificar qué fila cambió y actualizarla en Supabase
+                            for i, fila in cambios_unis.iterrows():
+                                original = df_unis_edit.iloc[i]
+                                if not fila.equals(original):
+                                    supabase.table("unidades").update({
+                                        "numero_economico": fila["numero_economico"], "placas": fila["placas"],
+                                        "modelo": fila["modelo"], "anio": int(fila["anio"]), "estatus": fila["estatus"]
+                                    }).eq("id", int(fila["id"])).execute()
+                            st.success("¡Flotilla de camiones actualizada con éxito!")
+                            st.rerun()
                     else:
-                        st.info("No hay camiones dados de alta.")
+                        st.info("No hay camiones registrados.")
                 except Exception as e:
-                    st.error(f"Error al leer indicadores: {e}")
+                    st.error(f"Error en módulo de camiones: {e}")
 
                 st.divider()
-                st.write("➕ **Registrar Nueva Unidad a la Flota**")
+                st.write("➕ **Añadir Camión Nuevo**")
                 with st.form("alta_unidad", clear_on_submit=True):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        num_eco = st.text_input("Número Económico (ej: Eco-05)")
-                        placas_u = st.text_input("Placas de Circulación")
+                        num_eco = st.text_input("Número Económico")
+                        placas_u = st.text_input("Placas")
                     with c2:
-                        modelo_u = st.text_input("Marca / Modelo (ej: Kenworth T680)")
-                        anio_u = st.number_input("Año de la Unidad", min_value=1990, max_value=2027, value=2020, step=1)
+                        modelo_u = st.text_input("Marca / Modelo")
+                        anio_u = st.number_input("Año", min_value=1990, max_value=2027, value=2020)
                     with c3:
-                        estatus_u = st.selectbox("Termómetro de Mantenimiento", ["Disponible", "Mantenimiento Preventivo", "Taller / Reparación"])
+                        estatus_u = st.selectbox("Termómetro Inicial", ["Disponible", "Mantenimiento Preventivo", "Taller / Reparación"])
                     
-                    if st.form_submit_button("Guardar Camión", use_container_width=True):
-                        if not num_eco or not modelo_u:
-                            st.error("El número económico y modelo son campos obligatorios.")
-                        else:
-                            try:
-                                supabase.table("unidades").insert({
-                                    "numero_economico": num_eco.strip(), "placas": placas_u.strip(),
-                                    "modelo": modelo_u.strip(), "anio": int(anio_u), "estatus": estatus_u
-                                }).execute()
-                                st.success("🚛 Unidad añadida con éxito a la flotilla.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al guardar unidad: {e}")
+                    if st.form_submit_button("Guardar Camión Nuevo"):
+                        if num_eco and modelo_u:
+                            supabase.table("unidades").insert({
+                                "numero_economico": num_eco.strip(), "placas": placas_u.strip(),
+                                "modelo": modelo_u.strip(), "anio": int(anio_u), "estatus": estatus_u
+                            }).execute()
+                            st.success("🚛 Camión añadido.")
+                            st.rerun()
 
-            # --- SUB-PESTAÑA 2: CONTROL DE OPERADORES ---
+            # --- SUB-PESTAÑA 2: CONTROL Y EDICIÓN DE CHOFERES ---
             with sub_tab2:
-                st.subheader("Gestión de Choferes Registrados")
+                st.subheader("Gestión y Corrección de Operadores")
                 
+                try:
+                    res_ops_ver = supabase.table("operadores").select("*").order("nombre").execute()
+                    if res_ops_ver.data:
+                        df_ops = pd.DataFrame(res_ops_ver.data)
+                        
+                        st.write("📝 **Editor de Choferes en Vivo (Corrige nombres, teléfonos o licencias directamente):**")
+                        df_ops_edit = df_ops[["id", "nombre", "licencia", "telefono"]]
+                        
+                        cambios_ops = st.data_editor(
+                            df_ops_edit, 
+                            key="editor_operadores", 
+                            use_container_width=True, 
+                            hide_index=True,
+                            disabled=["id"],
+                            column_config={"nombre": "Nombre Completo", "licencia": "Licencia Federal", "telefono": "Teléfono Contacto"}
+                        )
+                        
+                        if st.button("💾 Guardar Cambios en Choferes", use_container_width=True):
+                            for i, fila in cambios_ops.iterrows():
+                                original = df_ops_edit.iloc[i]
+                                if not fila.equals(original):
+                                    supabase.table("operadores").update({
+                                        "nombre": fila["nombre"], "licencia": fila["licencia"], "telefono": fila["telefono"]
+                                    }).eq("id", int(fila["id"])).execute()
+                            st.success("¡Padrón de choferes actualizado!")
+                            st.rerun()
+                    else:
+                        st.info("No hay operadores registrados.")
+                except Exception as e:
+                    st.error(f"Error en módulo de choferes: {e}")
+
+                st.divider()
+                st.write("➕ **Dar de Alta Nuevo Chofer**")
                 with st.form("alta_chofer", clear_on_submit=True):
                     ch1, ch2, ch3 = st.columns(3)
                     with ch1:
-                        nom_chofer = st.text_input("Nombre Completo del Operador")
+                        nom_chofer = st.text_input("Nombre Operador")
                     with ch2:
-                        lic_chofer = st.text_input("Número de Licencia Federal")
+                        lic_chofer = st.text_input("Licencia")
                     with ch3:
-                        tel_chofer = st.text_input("Teléfono de Contacto")
-                        
-                    if st.form_submit_button("Dar de Alta Chofer", use_container_width=True):
-                        if not nom_chofer:
-                            st.error("El nombre del operador es obligatorio.")
-                        else:
-                            try:
-                                supabase.table("operadores").insert({
-                                    "nombre": nom_chofer.strip(), "licencia": lic_chofer.strip(), "telefono": tel_chofer.strip()
-                                }).execute()
-                                st.success("👤 Chofer registrado de forma exitosa.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al guardar chofer: {e}")
+                        tel_chofer = st.text_input("Teléfono")
+                    if st.form_submit_button("Guardar Chofer"):
+                        if nom_chofer:
+                            supabase.table("operadores").insert({
+                                "nombre": nom_chofer.strip(), "licencia": lic_chofer.strip(), "telefono": tel_chofer.strip()
+                            }).execute()
+                            st.success("👤 Chofer guardado.")
+                            st.rerun()
 
-            # --- SUB-PESTAÑA 3: RÉCORD, DISCREPANCIAS Y SANCIONES ---
+            # --- SUB-PESTAÑA 3: LEVANTAR INCIDENCIAS ---
             with sub_tab3:
-                st.subheader("Récord de Desempeño y Sanciones por Chofer")
-                st.write("Registra y audita penalizaciones, daños de carga o incidencias en ruta.")
+                st.subheader("Levantar Reporte o Penalización")
                 
-                # Jalar operadores dinámicos para el reporte
                 op_opciones = lista_operadores if lista_operadores else ["José Hernández"]
                 
                 with st.form("alta_incidencia", clear_on_submit=True):
                     col_inc1, col_inc2 = st.columns(2)
                     with col_inc1:
-                        op_seleccionado = st.selectbox("Seleccionar Chofer a Reportar", op_opciones)
-                        tipo_rep = st.selectbox("Tipo de Incidencia / Reporte", ["Sanción por Retraso", "Discrepancia de Combustible", "Daño a la Unidad / Carga", "Felicitación / Récord Limpio"])
+                        op_seleccionado = st.selectbox("Chofer Involucrado", op_opciones)
+                        tipo_rep = st.selectbox("Gravedad / Tipo de Reporte", ["Sanción por Retraso", "Discrepancia de Combustible", "Daño a la Unidad / Carga", "Infracción de Tránsito", "Felicitación"])
                     with col_inc2:
-                        puntos_penalizacion = st.slider("Descuento en Récord (Puntos)", min_value=0, max_value=5, value=1)
-                        desc_inc = st.text_area("Detalle de la Discrepancia o Nota descriptiva")
+                        puntos_penalizacion = st.slider("Puntos a Descontar de su Récord", min_value=0, max_value=5, value=1)
+                        desc_inc = st.text_area("Explicación de la discrepancia detectada")
                         
-                    if st.form_submit_button("Aplicar Reporte al Historial", use_container_width=True):
-                        if not desc_inc:
-                            st.error("Por favor ingresa los detalles explicativos del reporte.")
-                        else:
-                            try:
-                                supabase.table("incidencias_operadores").insert({
-                                    "operador_nombre": op_seleccionado,
-                                    "tipo_reporte": tipo_rep,
-                                    "descripcion": desc_inc.strip(),
-                                    "puntos_record": -int(puntos_penalizacion) if puntos_penalizacion > 0 else 0
-                                }).execute()
-                                st.success(f"⚠️ Reporte aplicado exitosamente al expediente de {op_seleccionado}.")
-                            except Exception as e:
-                                st.error(f"Error al procesar la incidencia: {e}")
+                    if st.form_submit_button("Aplicar Reporte al Expediente"):
+                        if desc_inc:
+                            supabase.table("incidencias_operadores").insert({
+                                "operador_nombre": op_seleccionado, "tipo_reporte": tipo_rep,
+                                "descripcion": desc_inc.strip(), "puntos_record": -int(puntos_penalizacion) if puntos_penalizacion > 0 else 0
+                            }).execute()
+                            st.success(f"Reporte aplicado al expediente de {op_seleccionado}.")
+                            st.rerun()
 
-                st.divider()
-                st.write("📋 **Consulta de Expedientes en Tiempo Real**")
-                op_consulta = st.selectbox("Filtrar historial del operador:", op_opciones, key="consulta_historial")
+            # --- SUB-PESTAÑA 4: MENSAJERÍA Y REPORTE SEMANAL ---
+            with sub_tab4:
+                st.subheader("📋 Boletín Semanal de Rendimiento y Desempeño")
+                st.write("Resumen ejecutivo del comportamiento y las sanciones aplicadas en la semana en curso.")
                 
                 try:
-                    res_historial = supabase.table("incidencias_operadores").select("*").eq("operador_nombre", op_consulta).order("fecha", desc=True).execute()
-                    if res_historial.data and len(res_historial.data) > 0:
-                        df_hist = pd.DataFrame(res_historial.data)
-                        st.dataframe(df_hist[["fecha", "tipo_reporte", "descripcion", "puntos_record"]].rename(columns={
-                            "fecha": "📅 Fecha", "tipo_reporte": "🚨 Reporte", "descripcion": "🔍 Detalles", "puntos_record": "📉 Impacto Récord"
-                        }), use_container_width=True, hide_index=True)
+                    # Calculamos el inicio de la semana actual (Lunes)
+                    hoy = datetime.now()
+                    inicio_semana = hoy - timedelta(days=hoy.weekday())
+                    fecha_lunes = inicio_semana.strftime("%Y-%m-%d")
+                    
+                    st.info(f"📅 **Período Evaluado:** Del lunes {fecha_lunes} al día de hoy.")
+                    
+                    # Consultamos todas las incidencias históricas para armar las métricas de récords
+                    res_todas = supabase.table("incidencias_operadores").select("*").execute()
+                    
+                    if res_todas.data:
+                        df_todas = pd.DataFrame(res_todas.data)
+                        
+                        # Filtramos las que se aplicaron estrictamente esta semana para el boletín de mensajería
+                        df_todas['fecha'] = pd.to_datetime(df_todas['fecha'])
+                        df_semana = df_todas[df_todas['fecha'] >= pd.to_datetime(fecha_lunes)]
+                        
+                        # Mostrar el resumen tipo Mensajería
+                        if not df_semana.empty:
+                            st.warning(f"🚨 **Alertas de la Semana:** Se han levantado {len(df_semana)} reportes por discrepancias.")
+                            for _, r in df_semana.iterrows():
+                                st.chat_message("assistant", avatar="⚠️").write(
+                                    f"**{r['operador_nombre']}** recibió un reporte de tipo *{r['tipo_reporte']}* con un impacto de **{r['puntos_record']} pts**. \n\n*Detalles: {r['descripcion']}*"
+                                )
+                        else:
+                            st.success("✨ **Boletín Semanal:** Operación limpia. No se han registrado sanciones ni discrepancias esta semana.")
+                        
+                        st.divider()
+                        st.write("📊 **Récord Acumulado General de Choferes (Puntuación):**")
+                        st.write("Todos los operadores inician con **0 pts**. Las sanciones restan puntos de su récord histórico.")
+                        
+                        # Agrupamos por chofer para ver quién tiene más sanciones acumuladas
+                        df_record = df_todas.groupby("operador_nombre")["puntos_record"].sum().reset_index()
+                        df_record = df_record.rename(columns={"operador_nombre": "👤 Chofer", "puntos_record": "📉 Puntos Acumulados"})
+                        st.dataframe(df_record.sort_values(by="📉 Puntos Acumulados"), use_container_width=True, hide_index=True)
                     else:
-                        st.info(f"🟢 El operador {op_consulta} mantiene un récord impecable sin discrepancias registradas.")
+                        st.info("No hay historial de incidencias registrado en el sistema aún.")
                 except Exception as e:
-                    st.error(f"Error al cargar el expediente: {e}")
+                    st.error(f"Error al generar reporte semanal: {e}")
 
     # =========================================================
     # VISTA PARA EL CLIENTE
