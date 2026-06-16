@@ -87,10 +87,27 @@ else:
             except Exception as e:
                 st.error(f"❌ Error al cargar el monitoreo desde Supabase: {e}")
 
-        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES
+        # PESTAÑA 2: REGISTRO DE NUEVOS VIAJES (OPTIMIZADA)
         with tab2:
             st.subheader("➕ Registrar Nuevo Viaje")
             st.write("Ingresa los datos del flete para asignarlo al operador.")
+
+            # --- CARGA DE DATOS PARA SELECTBOXES ---
+            lista_operadores = []
+            lista_unidades = []
+            try:
+                supabase = obtener_cliente()
+                # Traer operadores activos de Supabase
+                res_ops = supabase.table("operadores").select("nombre").order("nombre").execute()
+                if res_ops.data:
+                    lista_operadores = [row["nombre"] for row in res_ops.data]
+                
+                # Traer unidades de Supabase
+                res_unis = supabase.table("unidades").select("numero_economico", "modelo").order("numero_economico").execute()
+                if res_unis.data:
+                    lista_unidades = [f"{row['numero_economico']} - {row['modelo']}" for row in res_unis.data]
+            except Exception as e:
+                st.warning(f"⚠️ Nota: No se pudieron precargar choferes/unidades automáticamente.")
 
             with st.form("formulario_despacho", clear_on_submit=True):
                 col_flete1, col_flete2 = st.columns(2)
@@ -98,12 +115,22 @@ else:
                 with col_flete1:
                     cliente = st.text_input("🏢 Nombre del Cliente")
                     origen = st.text_input("📍 Ciudad de Origen")
-                    operador_manual = st.text_input("👤 Nombre del Chofer / Operador")
+                    
+                    # Desplegable inteligente de Operadores
+                    if lista_operadores:
+                        operador_manual = st.selectbox("👤 Seleccionar Chofer / Operador", lista_operadores)
+                    else:
+                        operador_manual = st.text_input("👤 Nombre del Chofer / Operador (Manual)")
                     
                 with col_flete2:
                     tarifa = st.number_input("💰 Tarifa del Flete ($)", min_value=0.0, step=500.0)
                     destino = st.text_input("🏁 Ciudad de Destino")
-                    unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad")
+                    
+                    # Desplegable inteligente de Unidades
+                    if lista_unidades:
+                        unidad_manual = st.selectbox("🚛 Seleccionar Camión de la Flota", lista_unidades)
+                    else:
+                        unidad_manual = st.text_input("🚛 Camión / Placas de la Unidad (Manual)")
                 
                 boton_despachar = st.form_submit_button("🚀 Registrar y Despachar Viaje", use_container_width=True)
                 
@@ -142,7 +169,7 @@ else:
             st.write("Apartado para gestionar camiones y operadores reales (Próximamente).")
 
     # =========================================================
-    # VISTA PARA EL CLIENTE (ALINEACIÓN REVISADA)
+    # VISTA PARA EL CLIENTE 
     # =========================================================
     elif st.session_state.rol == "cliente":
         st.title("Portal de Clientes")
