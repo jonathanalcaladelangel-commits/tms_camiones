@@ -165,4 +165,4 @@ else:
                                 }
                                 for tipo_c, monto_c in conceptos_actualizar.items():
                                     registro_existente = df_g[(df_g['id_viaje'] == id_v_act) & (df_g['tipo_gasto'] == tipo_c)]
-                                    if not registro_existente.empty:
+                                    if not registro_existente.empty
