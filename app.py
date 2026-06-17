@@ -56,7 +56,7 @@ else:
         supabase = obtener_cliente()
 
         # ---------------------------------------------------------
-        # PESTAÑA 1: MAESTRA DE MONITOREO Y RENTABILIDAD EN VIVO (SINCRONIZACIÓN REAL-TIME)
+        # PESTAÑA 1: MAESTRA DE MONITOREO Y RENTABILIDAD EN VIVO
         # ---------------------------------------------------------
         with tab1:
             st.subheader("📊 Monitoreo General")
@@ -85,84 +85,8 @@ else:
                     df_pivot = df_pivot[['id_viaje', 'Diésel', 'Casetas', 'Maniobras', 'Sueldo Operador', 'Taller', 'Otros']]
                     df_pivot['id_viaje'] = df_pivot['id_viaje'].astype(int)
                     
-                    # --- VISTA OPERATIVA ESCENCIAL AL ENTRAR (DISCRETA) ---
+                    # --- VISTA OPERATIVA ESENCIAL AL ENTRAR (DISCRETA) ---
                     df_publico = df_v[["id", "id_cliente", "origen", "destino", "operador_manual", "unidad_manual", "estatus"]].rename(columns={
                         "id": "ID Viaje", "id_cliente": "🏢 Cliente", "origen": "📍 Origen", "destino": "🏁 Destino",
                         "operador_manual": "👤 Chofer", "unidad_manual": "🚛 Unidad", "estatus": "🟢 Estatus"
                     })
-                    st.dataframe(df_publico, use_container_width=True, hide_index=True)
-                    
-                    # --- CAJA FUERTE EXPANDIBLE FINANCIERA ---
-                    st.write("")
-                    with st.expander("🔓 Acceder a Balance Financiero y Corrección de Datos"):
-                        st.subheader("💰 Auditoría de Cuentas en Ruta")
-                        st.write("Modifica los montos de los fletes o desglosa los gastos abajo. Las tablas se recalculan en caliente.")
-                        
-                        st.divider()
-                        st.write("🔍 **1. Desglose de Gastos por Categoría (Modificación Real-Time)**")
-                        
-                        cambios_matriz_gastos = st.data_editor(
-                            df_pivot,
-                            key="editor_matriz_gastos_vivos",
-                            use_container_width=True,
-                            hide_index=True,
-                            disabled=["id_viaje"],
-                            column_config={
-                                "id_viaje": "ID Viaje",
-                                "Diésel": st.column_config.NumberColumn("⛽ Diésel", format="$%.2f"),
-                                "Casetas": st.column_config.NumberColumn("🛣️ Casetas", format="$%.2f"),
-                                "Maniobras": st.column_config.NumberColumn("🏗️ Maniobras", format="$%.2f"),
-                                "Sueldo Operador": st.column_config.NumberColumn("👤 Sueldo", format="$%.2f"),
-                                "Taller": st.column_config.NumberColumn("🔧 Taller", format="$%.2f"),
-                                "Otros": st.column_config.NumberColumn("📦 Otros", format="$%.2f")
-                            }
-                        )
-                        
-                        # --- CÁLCULO EN CALIENTE DE TOTALES ---
-                        df_gastos_calculados = cambios_matriz_gastos.copy()
-                        df_gastos_calculados["Gastos Totales"] = df_gastos_calculados[['Diésel', 'Casetas', 'Maniobras', 'Sueldo Operador', 'Taller', 'Otros']].sum(axis=1)
-                        
-                        df_merged_live = pd.merge(df_v, df_gastos_calculados[["id_viaje", "Gastos Totales"]], left_on="id", right_on="id_viaje", how="left")
-                        df_merged_live["Gastos Totales"] = df_merged_live["Gastos Totales"].fillna(0.0)
-                        df_merged_live["Utilidad Neta"] = df_merged_live["tarifa"] - df_merged_live["Gastos Totales"]
-                        
-                        st.divider()
-                        st.write("📈 **2. Resumen de Rentabilidad y Datos Base del Flete**")
-                        
-                        df_viajes_edicion = df_merged_live[["id", "id_cliente", "origen", "destino", "tarifa", "Gastos Totales", "Utilidad Neta"]]
-                        
-                        cambios_viajes = st.data_editor(
-                            df_viajes_edicion,
-                            key="editor_viajes_live_recalc",
-                            use_container_width=True,
-                            hide_index=True,
-                            disabled=["id", "Gastos Totales", "Utilidad Neta"],
-                            column_config={
-                                "id": "ID Viaje", "id_cliente": "🏢 Cliente", "origen": "📍 Origen", "destino": "🏁 Destino",
-                                "tarifa": st.column_config.NumberColumn("💰 Tarifa", format="$%,.2f"),
-                                "Gastos Totales": st.column_config.NumberColumn("🛑 Total Gastos", format="$%,.2f"),
-                                "Utilidad Neta": st.column_config.NumberColumn("💵 Utilidad Neta", format="$%,.2f")
-                            }
-                        )
-                        
-                        if st.button("💾 Guardar Toda la Información en la Base de Datos", use_container_width=True):
-                            # A. Guardar Viajes
-                            for i, fila in cambios_viajes.iterrows():
-                                original = df_viajes_edicion.iloc[i]
-                                if not fila.equals(original):
-                                    supabase.table("viajes").update({
-                                        "id_cliente": fila["id_cliente"], "origen": fila["origen"],
-                                        "destino": fila["destino"], "tarifa": float(fila["tarifa"])
-                                    }).eq("id", int(fila["id"])).execute()
-                                    
-                            # B. Guardar Gastos Matrix
-                            for i, fila in cambios_matriz_gastos.iterrows():
-                                id_v_act = int(fila["id_viaje"])
-                                conceptos_actualizar = {
-                                    "Diésel": float(fila["Diésel"]), "Casetas": float(fila["Casetas"]),
-                                    "Maniobras": float(fila["Maniobras"]), "Sueldo Operador": float(fila["Sueldo Operador"]),
-                                    "Taller": float(fila["Taller"]), "Otros": float(fila["Otros"])
-                                }
-                                for tipo_c, monto_c in conceptos_actualizar.items():
-                                    registro_existente = df_g[(df_g['id_viaje'] == id_v_act) & (df_g['tipo_gasto'] == tipo_c)]
-                                    if not registro_existente.empty
